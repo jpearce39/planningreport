@@ -1,0 +1,297 @@
+import crypto from 'node:crypto'
+import fs from 'node:fs'
+import path from 'node:path'
+import express from 'express'
+import puppeteer from 'puppeteer'
+import chromium from '@sparticuz/chromium'
+
+const app = express()
+const port = Number(process.env.PORT || 3001)
+const dataDirectory = path.resolve('data')
+const dataFile = path.join(dataDirectory, 'store.json')
+const vicmapUrl = 'https://services-ap1.arcgis.com/P744lA0wf4LlBZ84/arcgis/rest/services/Vicmap_Parcel/FeatureServer/0/query'
+const planningUrl = 'https://services-ap1.arcgis.com/P744lA0wf4LlBZ84/arcgis/rest/services/Vicmap_Planning/FeatureServer'
+const geocoderUrl = 'https://geocode.arcgis.com/arcgis/rest/services/World/GeocodeServer/findAddressCandidates'
+const imageryUrl = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/export'
+const serviceSpatialReference = '3857'
+
+app.use(express.json({ limit: '2mb' }))
+app.use((request, response, next) => {
+  response.setHeader('Access-Control-Allow-Origin', request.headers.origin || 'http://localhost:5173')
+  response.setHeader('Access-Control-Allow-Credentials', 'true')
+  response.setHeader('Access-Control-Allow-Headers', 'Content-Type')
+  response.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS')
+  if (request.method === 'OPTIONS') return response.sendStatus(204)
+  next()
+})
+
+function readStore() {
+  fs.mkdirSync(dataDirectory, { recursive: true })
+  if (!fs.existsSync(dataFile)) return { users: [], projects: [], sessions: [] }
+  return JSON.parse(fs.readFileSync(dataFile, 'utf8'))
+}
+
+function writeStore(store) {
+  fs.mkdirSync(dataDirectory, { recursive: true })
+  fs.writeFileSync(dataFile, JSON.stringify(store, null, 2))
+}
+
+function id() { return crypto.randomUUID() }
+function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
+  return { salt, hash: crypto.scryptSync(password, salt, 64).toString('hex') }
+}
+function validPassword(password, user) {
+  return crypto.timingSafeEqual(Buffer.from(hashPassword(password, user.salt).hash, 'hex'), Buffer.from(user.passwordHash, 'hex'))
+}
+function cookieValue(request, name) {
+  return (request.headers.cookie || '').split(';').map((part) => part.trim().split('=')).find(([key]) => key === name)?.[1]
+}
+function userFromRequest(request) {
+  const token = cookieValue(request, 'plan_vic_session')
+  if (!token) return null
+  const store = readStore()
+  const session = store.sessions.find((item) => item.token === token && item.expiresAt > Date.now())
+  return session ? store.users.find((user) => user.id === session.userId) : null
+}
+function requireUser(request, response, next) {
+  const user = userFromRequest(request)
+  if (!user) return response.status(401).json({ error: 'Authentication required' })
+  request.user = user
+  next()
+}
+function publicUser(user) { return { id: user.id, name: user.name, email: user.email } }
+function zoneClause(zone) {
+  const normalized = String(zone || '').trim().toUpperCase()
+  const match = normalized.match(/^(GRZ|NRZ|RGZ)(\d+)$/)
+  if (!match) return null
+  const clause = { GRZ: '32.08', NRZ: '32.09', RGZ: '32.07' }[match[1]]
+  return { clause, schedule: `s${match[2]}`, zone: normalized }
+}
+async function scrapePlanningStandards(lga, zone, dwellings) {
+  const mapping = zoneClause(zone)
+  if (!mapping) return { supported: false, rows: [], text: '', message: 'This zone prefix is not supported for automatic scraping. Enter the table data manually.' }
+  const url = `https://planning-schemes.app.planning.vic.gov.au/${encodeURIComponent(String(lga).trim().toUpperCase())}/ordinance/${mapping.clause}-${mapping.schedule}`
+  const prefix = Number(dwellings) > 1 ? 'B' : 'A'
+  const executablePath = process.env.PUPPETEER_EXECUTABLE_PATH || await chromium.executablePath()
+  const browser = await puppeteer.launch({ headless: true, executablePath, args: process.env.PUPPETEER_EXECUTABLE_PATH ? ['--no-sandbox', '--disable-setuid-sandbox'] : chromium.args })
+  try {
+    const page = await browser.newPage()
+    await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 })
+    await page.waitForFunction(() => [...document.querySelectorAll('table')].some((table) => table.matches('table.ordinance-section__table.clause-1') || [...table.querySelectorAll('tr:first-child th, tr:first-child td')].some((cell) => cell.innerText.trim().toLowerCase() === 'standard')), { timeout: 30000 })
+    const rows = await page.$$eval('table.ordinance-section__table.clause-1, table.table-style-2', (tables, rowPrefix) => {
+      const table = tables.find((candidate) => [...candidate.querySelectorAll('tr:first-child th, tr:first-child td')].some((cell) => cell.innerText.trim().toLowerCase() === 'standard'))
+      if (!table) return []
+      const tableRows = [...table.querySelectorAll('tr')]
+      return tableRows.slice(1).map((row) => [...row.querySelectorAll('th,td')].map((cell) => cell.innerText.replace(/\s+/g, ' ').trim())).map((cells) => ({ cells, standardIndex: cells.findIndex((cell) => new RegExp(`(?:^|\\s|and )${rowPrefix}\\d+(?:-\\d+)?\\b`, 'i').test(cell)) })).filter(({ standardIndex }) => standardIndex >= 0).map(({ cells, standardIndex }) => { const standard = cells[standardIndex].match(new RegExp(`${rowPrefix}\\d+(?:-\\d+)?`, 'i'))?.[0] || cells[standardIndex]; return { standard, values: cells, text: cells.map((cell, index) => index === standardIndex ? standard : cell).join(' | ') } })
+    }, prefix)
+    return { supported: true, url, zone: mapping.zone, clause: mapping.clause, schedule: mapping.schedule, filter: prefix, rows, text: rows.map((row) => row.text).join('\n'), message: rows.length ? 'Planning standards scraped successfully' : 'The table loaded but no matching standards were found' }
+  } finally {
+    await browser.close()
+  }
+}
+function geodesicAreaFromWebMercator(geometry) {
+  if (!geometry?.rings?.length) return null
+  const radius = 6378137
+  const ringArea = (ring) => {
+    let area = 0
+    for (let index = 0; index < ring.length - 1; index += 1) {
+      const [x1, y1] = ring[index]
+      const [x2, y2] = ring[index + 1]
+      const longitude1 = x1 / radius
+      const longitude2 = x2 / radius
+      const latitude1 = 2 * Math.atan(Math.exp(y1 / radius)) - Math.PI / 2
+      const latitude2 = 2 * Math.atan(Math.exp(y2 / radius)) - Math.PI / 2
+      area += (longitude2 - longitude1) * (2 + Math.sin(latitude1) + Math.sin(latitude2))
+    }
+    return area * radius ** 2 / 2
+  }
+  return Math.round(Math.abs(geometry.rings.reduce((total, ring) => total + ringArea(ring), 0)) * 100) / 100
+}
+async function queryPlanningLayer(layerId, geometry) {
+  const query = new URLSearchParams({ f: 'json', where: '1=1', geometry: JSON.stringify(geometry), geometryType: 'esriGeometryPolygon', inSR: serviceSpatialReference, spatialRel: 'esriSpatialRelIntersects', outFields: 'zone_code,zone_description,lga,scheme_code', returnGeometry: 'true', outSR: serviceSpatialReference })
+  const result = await fetch(`${planningUrl}/${layerId}/query?${query}`)
+  if (!result.ok) throw new Error(`Vicmap Planning layer ${layerId} responded with ${result.status}`)
+  const payload = await result.json()
+  if (payload.error) throw new Error(payload.error.message || `Vicmap Planning layer ${layerId} returned an error`)
+  return payload.features || []
+}
+function geometryExtent(geometry) {
+  const points = geometry?.rings?.flat() || []
+  if (!points.length) return null
+  return points.reduce(([xmin, ymin, xmax, ymax], [x, y]) => [Math.min(xmin, x), Math.min(ymin, y), Math.max(xmax, x), Math.max(ymax, y)], [Infinity, Infinity, -Infinity, -Infinity])
+}
+function expandExtent(extent, padding = 0.15) {
+  const [xmin, ymin, xmax, ymax] = extent
+  const width = xmax - xmin || 1
+  const height = ymax - ymin || 1
+  const pad = Math.max(width, height) * padding
+  return [xmin - pad, ymin - pad, xmax + pad, ymax + pad]
+}
+function imageExtent(geometry) {
+  const extent = geometryExtent(geometry)
+  if (!extent) return null
+  let [xmin, ymin, xmax, ymax] = expandExtent(extent, 2)
+  const targetAspect = 900 / 600
+  const width = xmax - xmin
+  const height = ymax - ymin
+  const currentAspect = width / height
+  if (currentAspect < targetAspect) {
+    const targetWidth = height * targetAspect
+    const center = (xmin + xmax) / 2
+    xmin = center - targetWidth / 2
+    xmax = center + targetWidth / 2
+  } else if (currentAspect > targetAspect) {
+    const targetHeight = width / targetAspect
+    const center = (ymin + ymax) / 2
+    ymin = center - targetHeight / 2
+    ymax = center + targetHeight / 2
+  }
+  return [xmin, ymin, xmax, ymax]
+}
+function svgMap(features, color, label, sharedExtent = null) {
+  const geometries = features.map((feature) => feature.geometry).filter(Boolean)
+  const extents = geometries.map(geometryExtent).filter(Boolean)
+  if (!extents.length) return ''
+  const extent = sharedExtent || expandExtent(extents.reduce(([xmin, ymin, xmax, ymax], [featureXmin, featureYmin, featureXmax, featureYmax]) => [Math.min(xmin, featureXmin), Math.min(ymin, featureYmin), Math.max(xmax, featureXmax), Math.max(ymax, featureYmax)], [Infinity, Infinity, -Infinity, -Infinity]))
+  const [xmin, ymin, xmax, ymax] = extent
+  const width = 900
+  const height = 600
+  const project = ([x, y]) => `${((x - xmin) / (xmax - xmin)) * width},${height - ((y - ymin) / (ymax - ymin)) * height}`
+  const paths = geometries.flatMap((geometry) => geometry.rings.map((ring) => `<path d="M ${ring.map(project).join(' L ')} Z"/>`)).join('')
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}"><g fill="${color}" fill-opacity=".46" stroke="${color}" stroke-width="4">${paths}</g><path d="M 0 ${height / 2} H ${width} M ${width / 2} 0 V ${height}" stroke="#fff" stroke-width="3" opacity=".75"/><text x="28" y="54" font-family="monospace" font-size="22" fill="#172c2a">${label}</text><text x="28" y="580" font-family="monospace" font-size="15" fill="#fff">VICMAP PLANNING / SPATIAL INTERSECT</text></svg>`
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`
+}
+function boundaryOverlayUrl(geometry) {
+  const extent = imageExtent(geometry)
+  if (!extent) return ''
+  const [xmin, ymin, xmax, ymax] = extent
+  const width = 900
+  const height = 600
+  const project = ([x, y]) => `${((x - xmin) / (xmax - xmin)) * width},${height - ((y - ymin) / (ymax - ymin)) * height}`
+  const paths = (geometry.rings || []).map((ring) => `<path d="M ${ring.map(project).join(' L ')} Z"/>`).join('')
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}"><g fill="#d8f15a" fill-opacity=".18" stroke="#172c2a" stroke-width="18" stroke-linejoin="round">${paths}</g><g fill="none" stroke="#ef553d" stroke-width="10" stroke-linejoin="round">${paths}</g></svg>`
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`
+}
+function satelliteImageUrl(geometry) {
+  const extent = imageExtent(geometry)
+  if (!extent) return ''
+  const [xmin, ymin, xmax, ymax] = extent
+  return `${imageryUrl}?${new URLSearchParams({ f: 'image', bbox: [xmin, ymin, xmax, ymax].join(','), bboxSR: serviceSpatialReference, imageSR: serviceSpatialReference, size: '900,600', format: 'png', pixelType: 'U8', noDataInterpretation: 'esriNoDataMatchAny', interpolation: 'RSP_BilinearInterpolation' })}`
+}
+async function geocodeAddress(address) {
+  const query = new URLSearchParams({ f: 'json', singleLine: address, outSR: '4326', maxLocations: '5' })
+  const result = await fetch(`${geocoderUrl}?${query}`)
+  if (!result.ok) throw new Error(`ArcGIS geocoder responded with ${result.status}`)
+  const payload = await result.json()
+  const candidate = payload.candidates?.find((item) => item.location?.x && item.location?.y)
+  if (!candidate) return null
+  return { address: candidate.address, longitude: candidate.location.x, latitude: candidate.location.y, score: candidate.score }
+}
+async function queryParcel(point) {
+  const query = new URLSearchParams({ f: 'json', where: '1=1', geometry: JSON.stringify({ x: point.longitude, y: point.latitude, spatialReference: { wkid: 4326 } }), geometryType: 'esriGeometryPoint', inSR: '4326', spatialRel: 'esriSpatialRelIntersects', outFields: '*', returnGeometry: 'true', outSR: serviceSpatialReference })
+  const result = await fetch(`${vicmapUrl}?${query}`)
+  if (!result.ok) throw new Error(`Vicmap Parcel responded with ${result.status}`)
+  const payload = await result.json()
+  if (payload.error) throw new Error(payload.error.message || 'Vicmap Parcel returned an error')
+  return payload.features?.[0] || null
+}
+
+app.post('/api/auth/register', (request, response) => {
+  const { name, email, password } = request.body || {}
+  if (!name || !email || !password || password.length < 8) return response.status(400).json({ error: 'Name, email and a password of at least 8 characters are required' })
+  const store = readStore()
+  const normalizedEmail = email.trim().toLowerCase()
+  if (store.users.some((user) => user.email === normalizedEmail)) return response.status(409).json({ error: 'An account with that email already exists' })
+  const credentials = hashPassword(password)
+  const user = { id: id(), name: name.trim(), email: normalizedEmail, passwordHash: credentials.hash, salt: credentials.salt, createdAt: Date.now() }
+  store.users.push(user)
+  writeStore(store)
+  return createSession(response, user)
+})
+
+app.post('/api/auth/login', (request, response) => {
+  const { email, password } = request.body || {}
+  const store = readStore()
+  const user = store.users.find((item) => item.email === String(email || '').trim().toLowerCase())
+  if (!user || !validPassword(String(password || ''), user)) return response.status(401).json({ error: 'Email or password is incorrect' })
+  return createSession(response, user)
+})
+
+function createSession(response, user) {
+  const token = id()
+  const store = readStore()
+  store.sessions = store.sessions.filter((session) => session.expiresAt > Date.now())
+  store.sessions.push({ token, userId: user.id, expiresAt: Date.now() + 1000 * 60 * 60 * 24 * 30 })
+  writeStore(store)
+  response.setHeader('Set-Cookie', `plan_vic_session=${token}; HttpOnly; Path=/; SameSite=Lax; Max-Age=2592000`)
+  return response.json({ user: publicUser(user) })
+}
+
+app.post('/api/auth/logout', (request, response) => {
+  const token = cookieValue(request, 'plan_vic_session')
+  const store = readStore()
+  store.sessions = store.sessions.filter((session) => session.token !== token)
+  writeStore(store)
+  response.setHeader('Set-Cookie', 'plan_vic_session=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0')
+  response.sendStatus(204)
+})
+app.get('/api/auth/me', (request, response) => {
+  const user = userFromRequest(request)
+  response.json({ user: user ? publicUser(user) : null })
+})
+
+app.get('/api/projects', requireUser, (request, response) => {
+  const store = readStore()
+  response.json({ projects: store.projects.filter((project) => project.userId === request.user.id).sort((a, b) => b.updatedAt - a.updatedAt) })
+})
+app.post('/api/projects', requireUser, (request, response) => {
+  const project = { id: id(), userId: request.user.id, name: request.body.name || request.body.address || 'Untitled planning report', report: request.body.report || {}, createdAt: Date.now(), updatedAt: Date.now() }
+  const store = readStore(); store.projects.push(project); writeStore(store); response.status(201).json({ project })
+})
+app.put('/api/projects/:projectId', requireUser, (request, response) => {
+  const store = readStore(); const project = store.projects.find((item) => item.id === request.params.projectId && item.userId === request.user.id)
+  if (!project) return response.status(404).json({ error: 'Project not found' })
+  project.report = request.body.report || project.report; project.name = request.body.name || project.name; project.updatedAt = Date.now(); writeStore(store); response.json({ project })
+})
+app.delete('/api/projects/:projectId', requireUser, (request, response) => {
+  const store = readStore(); const count = store.projects.length; store.projects = store.projects.filter((item) => !(item.id === request.params.projectId && item.userId === request.user.id))
+  if (store.projects.length === count) return response.status(404).json({ error: 'Project not found' }); writeStore(store); response.sendStatus(204)
+})
+
+app.get('/api/vicmap/lookup', async (request, response) => {
+  const address = String(request.query.address || '').trim()
+  if (!address) return response.status(400).json({ error: 'An address is required' })
+  try {
+    const geocoded = await geocodeAddress(address)
+    if (!geocoded) return response.status(404).json({ error: 'The address could not be geocoded' })
+    const feature = await queryParcel(geocoded)
+    if (!feature) return response.status(404).json({ error: 'No Vicmap parcel found for this address' })
+    const attributes = feature.attributes || {}
+    const [zoneFeatures, overlayFeatures] = await Promise.all([queryPlanningLayer(3, feature.geometry), queryPlanningLayer(2, feature.geometry)])
+    const zoneAttributes = zoneFeatures[0]?.attributes || {}
+    const zone = zoneAttributes.zone_code || ''
+    const zoneDescription = zoneAttributes.zone_description || ''
+    const overlays = [...new Map(overlayFeatures.map(({ attributes: overlay }) => [`${overlay.zone_code}-${overlay.zone_description}`, `${overlay.zone_code} — ${overlay.zone_description}`])).values()].join('\n')
+    const lga = zoneAttributes.lga || overlayFeatures[0]?.attributes?.lga || ''
+    const geodesicSiteArea = geodesicAreaFromWebMercator(feature.geometry)
+    const sharedMapExtent = imageExtent(feature.geometry)
+    const overlayGroups = [...new Map(overlayFeatures.map((feature) => [`${feature.attributes.zone_code}-${feature.attributes.zone_description}`, []])).keys()].map((key) => overlayFeatures.filter((feature) => `${feature.attributes.zone_code}-${feature.attributes.zone_description}` === key))
+    response.json({ address: geocoded.address, location: geocoded, parcel: { zone, zoneDescription, overlays, lga, siteArea: geodesicSiteArea ?? attributes.SHAPE__AREA ?? attributes.Shape__Area ?? '', geometry: feature.geometry || null, spatialReference: serviceSpatialReference }, maps: { satellite: satelliteImageUrl(feature.geometry), satelliteBoundary: boundaryOverlayUrl(feature.geometry), zoning: svgMap(zoneFeatures, '#d77c62', `${zone || 'ZONE'} / ${zoneDescription || 'ZONING'}`, sharedMapExtent), overlays: overlayGroups.map((group) => svgMap(group, '#6b9c7d', `${group[0]?.attributes.zone_code || 'OVERLAY'} / ${group[0]?.attributes.zone_description || ''}`, sharedMapExtent)).filter(Boolean) }, planningControlsAvailable: Boolean(zone || zoneDescription || overlays), message: zone || zoneDescription || overlays ? 'Parcel and planning controls found' : 'Parcel found; no planning controls intersected this parcel', raw: { parcel: attributes, geodesicSiteArea, zone: zoneAttributes, overlays: overlayFeatures.map(({ attributes: overlay }) => overlay) } })
+  } catch (error) {
+    response.status(502).json({ error: 'Vicmap lookup failed', detail: error.message })
+  }
+})
+
+app.get('/api/planning/standards', async (request, response) => {
+  const lga = String(request.query.lga || '').trim()
+  const zone = String(request.query.zone || '').trim()
+  const dwellings = Number(request.query.dwellings || 1)
+  if (!lga || !zone) return response.status(400).json({ error: 'LGA and zone are required' })
+  try {
+    response.json(await scrapePlanningStandards(lga, zone, dwellings))
+  } catch (error) {
+    response.status(502).json({ error: 'Planning standards scrape failed', detail: error.message })
+  }
+})
+
+app.listen(port, () => console.log(`PLAN / VIC API listening on http://localhost:${port}`))
