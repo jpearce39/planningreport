@@ -6,18 +6,22 @@ Town planning report generator for Victorian residential development projects.
 
 ```bash
 npm install
-npm run dev
+npm run dev:full
 ```
+
+`dev:full` starts the Express API on port 3001 and the Vite dev server together; Vite proxies `/api` requests to the API. To run them separately, use `npm run server` and `npm run dev`. Set the `PORT` environment variable to change the API port.
 
 Create a production build with `npm run build`.
 
 ## Workflow data reference
 
-The report builder stores one report object in browser `localStorage` under `planning-report`. Every wizard screen writes to that object, so **Save & exit** and browser refreshes preserve the current draft.
+The report builder stores one report object in browser `localStorage` under `planning-report`, with the current wizard step under `planning-report-step`. Every wizard screen writes to that object, so **Save & exit** and browser refreshes preserve the current draft. When signed in, saving also syncs the draft to the backend projects API; the local copy remains the fallback when signed out or when the API is offline.
+
+The home screen lists your saved projects from the API when signed in, or the local draft when signed out. Clicking a project card reopens it in the wizard, and each card has a delete button with an inline confirmation before the project (or local draft) is permanently removed.
 
 | Step | Data captured |
 | --- | --- |
-| 1 | `address`; Vicmap lookup is initiated here |
+| 1 | `address`; Vicmap lookup is initiated here, with sample defaults applied if the lookup fails so every field stays editable |
 | 2 | `zone`, `zoneDescription`, `overlays`, `lga`; all values remain editable |
 | 3 | `dwellings`, `storeys`, `parking`, `parkingOther` |
 | 4 | `existing` site condition |
@@ -28,11 +32,19 @@ The report builder stores one report object in browser `localStorage` under `pla
 | 9 | Zoning map image, replaceable by the user |
 | 10 | One overlay map image per overlay, replaceable by the user |
 | 11-14 | `siteCoverage`, `permeable`, `gardenArea`, `canopy` in square metres |
-| 15 | `summary`, intended to be approximately 70 words |
+| 15 | `summary`, up to 500 words |
 | 16 | `openSpace[]`, with secluded and total private open space per dwelling |
-| 17 | `ordinance`, filtered to A values for one dwelling or B values for multiple dwellings |
+| 17 | `ordinance`, scraped on demand via `/api/planning/standards` and filtered to A values for one dwelling or B values for multiple dwellings |
 | 18 | `maxHeight`, including `None specified` where applicable |
-| 19 | Garden requirement and achieved percentage confirmation |
+| 19 | Garden requirement and achieved percentage confirmation; the requirement percentage is editable |
+| 20 | `carParking`, defaults filled in |
+| 21 | `existingTrees[]` (freeform identifier like `T1`, plus species, spread × height, status, location, retain/remove) and Clause 52.37 canopy requirement (`canopyRequired`, `canopyAchieved`) computed from site area. Tick "no existing canopy trees" to skip the tree list |
+| 22 | `streetSetback` (Clause 55 B2-1) — compliance flag with APPEAL RIGHTS (**Yes** when left unticked, **No** when ticked), distance setback (m), and notes (defaults filled in: "Front setback compliant with planning controls.") |
+| 23 | `buildingHeightClause` (Clause 55 B2-2) — compliance flag with APPEAL RIGHTS, max height (m), notes (defaults filled in: "Maximum height is below the requirement of the zoning.") |
+| 24 | `sideRearSetbacks` (Clause 55 B2-3) — compliance flag with APPEAL RIGHTS, method picker (`B2-3.1` or `B2-3.2`), plus a list of boundaries each with floors. Required setback per floor is calculated from height: under B2-3.1 `max(1, 1 + 0.3×(h−3.6), 1 + 0.99 + (h−6.9))`; under B2-3.2 it's 3/4.5 m (or 6/9 m when south-facing between S 30° W and S 30° E). A `Yes`/No` south-facing toggle appears only for the B2-3.2 method. |
+| 25 | `wallsOnBoundary` (B2-4) — compliance flag with APPEAL RIGHTS, count, and a list of walls each with elevation, boundary length, achieved length, average height, and maximum height. Allowable wall on boundary = `10 + 0.25 × boundary length` (calculated live) |
+| 26 | `siteCoverageClause` (B2-5) — compliance flag with APPEAL RIGHTS. Computes site coverage % from `siteCoverage / siteArea` and shows the maximum allowable by zone (NRZ 60%, GRZ 65%, RGZ/MUZ/HCTZ 70%) |
+| 27 | `accessClause` (B2-6) — compliance flag with APPEAL RIGHTS, proposed crossover width, and tree encroachment percentage. Allowable crossover is 33% of street frontage (or 40% if frontage < 20 m), shown live |
 
 ## Calculation rules
 
@@ -44,9 +56,23 @@ Garden requirement is calculated from total site area:
 
 Achieved garden percentage is `gardenArea / siteArea * 100`, rounded to the nearest whole percentage.
 
+Clause 52.37 canopy requirement is calculated from total site area:
+
+- Under 1000 m²: minimum 10%
+- 1000–1500 m²: minimum 15%
+- 1500 m² or greater: minimum 20%
+
+Achieved canopy percentage is `canopy / siteArea * 100`, rounded to the nearest whole percentage.
+
+## Word document export
+
+The report screen has a **Word document** button that fills `server/template.docx` with [docxtemplater](https://docxtemplater.com/) and downloads the result. The starter template is generated by `node server/build-starter-template.mjs`; replace it with your own styled template and place tags where you need them. The full tag reference (text fields, the `{#openSpace}` loop, and `{%...}` image tags) is in [docs/template-tags.md](docs/template-tags.md).
+
+Map images are rendered server-side with the existing Puppeteer/Chromium setup: each tag produces a 900×600 composite of the satellite base with the relevant layer drawn on top, matching what the wizard shows. Images you replaced with your own uploads are converted to data URLs by the browser before export.
+
 ## Backend
 
-Run the API separately with `npm run server`, or run both services with `npm run dev:full`. The API uses an HTTP-only cookie session and stores users, sessions, and projects in `data/store.json` for local development. Passwords are salted and hashed with Node's `scrypt`; plaintext passwords are never stored.
+Run the API separately with `npm run server` (port 3001 by default), or run both services with `npm run dev:full`. The API uses an HTTP-only cookie session (`plan_vic_session`, 30-day expiry) and stores users, sessions, and projects in `data/store.json` for local development. Passwords are salted and hashed with Node's `scrypt`; plaintext passwords are never stored.
 
 Available routes:
 
@@ -54,10 +80,11 @@ Available routes:
 - `GET /api/projects`, `POST /api/projects`, `PUT /api/projects/:projectId`, `DELETE /api/projects/:projectId`
 - `GET /api/vicmap/lookup?address=...`
 - `GET /api/planning/standards?lga=...&zone=...&dwellings=...`
+- `POST /api/report/document`
 
 The standards endpoint uses Puppeteer to render `planning-schemes.app.planning.vic.gov.au/{LGA}/ordinance/{ZONE_CLAUSE}`, scrape `table.ordinance-section__table.clause-1`, and filter the `Standard` column by `A` for one proposed dwelling or `B` for multiple dwellings. Supported zone mappings are `GRZ -> 32.08`, `NRZ -> 32.09`, and `RGZ -> 32.07`; the schedule number is taken from the numeric suffix, for example `GRZ1 -> 32.08-s1`. Unsupported prefixes return a manual-entry response.
 
-The scraper uses `@sparticuz/chromium`, which bundles a portable Chromium binary for Codespaces and avoids requiring system GTK libraries. Set `PUPPETEER_EXECUTABLE_PATH` only when deploying with an existing Chrome/Chromium installation.
+On Linux (for example Codespaces or serverless deployments) the scraper uses `@sparticuz/chromium`, which bundles a portable Chromium binary and avoids requiring system GTK libraries. On other platforms it uses the Chrome that Puppeteer downloads at install time. Set `PUPPETEER_EXECUTABLE_PATH` only when deploying with an existing Chrome/Chromium installation. Rows that continue a multi-row label (rowspan) inherit that label, so filtered standards keep their description.
 
 ## Integration notes
 
@@ -66,10 +93,16 @@ The address lookup now runs through the backend proxy. It first resolves the add
 - Layer `3`: planning scheme zones, returning `zone_code`, `zone_description`, and `lga`
 - Layer `2`: planning scheme overlays, returning `zone_code`, `zone_description`, and `lga`
 
-The response includes the geocoder's `location.longitude` and `location.latitude` in WGS84, alongside parcel geometry in Web Mercator (EPSG:3857). The planning service uses Web Mercator, so parcel intersects are performed in `3857` to avoid a projection mismatch. Site area is calculated geodesically from the returned polygon after converting it from Web Mercator, rather than using ArcGIS `Shape__Area` directly. This avoids inflated areas such as `1285.7 m²` becoming the correct `803.9 m²` for 30 Haig Street. The raw service value remains available under `raw.parcel.Shape__Area` for diagnostics. The address lookup now uses the geocoder rather than treating the parcel layer as an address source for:
+Each layer query is fault-tolerant: if one Vicmap Planning layer is unavailable or returns an error, the lookup still succeeds with the remaining layers and the affected fields stay editable for manual entry, rather than the whole lookup failing.
+
+The response includes the geocoder's `location.longitude` and `location.latitude` in WGS84, alongside parcel geometry in Web Mercator (EPSG:3857). The planning service uses Web Mercator, so parcel intersects are performed in `3857` to avoid a projection mismatch. Site area is calculated geodesically from the returned polygon after converting it from Web Mercator, rather than using ArcGIS `Shape__Area` directly. This avoids inflated areas such as `1285.7 m²` becoming the correct `803.9 m²` for 30 Haig Street. The raw service value remains available under `raw.parcel.Shape__Area` for diagnostics.
+
+The lookup response also includes generated map images under `maps`: an ArcGIS World_Imagery satellite export URL, an SVG parcel boundary overlay, and SVG zoning and overlay maps rendered server-side from the Vicmap Planning intersect geometries on a shared extent. The wizard composites the zoning and overlay SVGs over the satellite image, and every image can be replaced by the user.
+
+The address lookup now uses the geocoder rather than treating the parcel layer as an address source for:
 
 - Vicmap Parcel FeatureServer lookup and geometry-derived site area
-- ArcGIS satellite, zoning, and overlay exports
+- ArcGIS satellite export and server-rendered boundary, zoning, and overlay map images
 - Puppeteer scraping of `planning-schemes.app.planning.vic.gov.au/{LGA}/ordinance/{ZONE_CLAUSE}`
 
 Zone clause mapping for the scraper is `GRZ -> 32.08`, `RGZ -> 32.07`, and `NRZ -> 32.09`; unsupported zone prefixes should expose a manual ordinance entry, as the UI does today.

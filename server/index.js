@@ -4,18 +4,22 @@ import path from 'node:path'
 import express from 'express'
 import puppeteer from 'puppeteer'
 import chromium from '@sparticuz/chromium'
+import PizZip from 'pizzip'
+import Docxtemplater from 'docxtemplater'
+import ImageModule from 'docxtemplater-image-module-free'
 
 const app = express()
 const port = Number(process.env.PORT || 3001)
 const dataDirectory = path.resolve('data')
 const dataFile = path.join(dataDirectory, 'store.json')
+const templateFile = path.resolve('server', 'template.docx')
 const vicmapUrl = 'https://services-ap1.arcgis.com/P744lA0wf4LlBZ84/arcgis/rest/services/Vicmap_Parcel/FeatureServer/0/query'
 const planningUrl = 'https://services-ap1.arcgis.com/P744lA0wf4LlBZ84/arcgis/rest/services/Vicmap_Planning/FeatureServer'
 const geocoderUrl = 'https://geocode.arcgis.com/arcgis/rest/services/World/GeocodeServer/findAddressCandidates'
 const imageryUrl = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/export'
 const serviceSpatialReference = '3857'
 
-app.use(express.json({ limit: '2mb' }))
+app.use(express.json({ limit: '25mb' }))
 app.use((request, response, next) => {
   response.setHeader('Access-Control-Allow-Origin', request.headers.origin || 'http://localhost:5173')
   response.setHeader('Access-Control-Allow-Credentials', 'true')
@@ -67,13 +71,17 @@ function zoneClause(zone) {
   const clause = { GRZ: '32.08', NRZ: '32.09', RGZ: '32.07' }[match[1]]
   return { clause, schedule: `s${match[2]}`, zone: normalized }
 }
+async function launchBrowser() {
+  const useBundledChromium = !process.env.PUPPETEER_EXECUTABLE_PATH && process.platform === 'linux'
+  const executablePath = process.env.PUPPETEER_EXECUTABLE_PATH || (useBundledChromium ? await chromium.executablePath() : await puppeteer.executablePath())
+  return puppeteer.launch({ headless: true, executablePath, args: useBundledChromium ? chromium.args : ['--no-sandbox', '--disable-setuid-sandbox'] })
+}
 async function scrapePlanningStandards(lga, zone, dwellings) {
   const mapping = zoneClause(zone)
   if (!mapping) return { supported: false, rows: [], text: '', message: 'This zone prefix is not supported for automatic scraping. Enter the table data manually.' }
   const url = `https://planning-schemes.app.planning.vic.gov.au/${encodeURIComponent(String(lga).trim().toUpperCase())}/ordinance/${mapping.clause}-${mapping.schedule}`
   const prefix = Number(dwellings) > 1 ? 'B' : 'A'
-  const executablePath = process.env.PUPPETEER_EXECUTABLE_PATH || await chromium.executablePath()
-  const browser = await puppeteer.launch({ headless: true, executablePath, args: process.env.PUPPETEER_EXECUTABLE_PATH ? ['--no-sandbox', '--disable-setuid-sandbox'] : chromium.args })
+  const browser = await launchBrowser()
   try {
     const page = await browser.newPage()
     await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 })
@@ -81,8 +89,13 @@ async function scrapePlanningStandards(lga, zone, dwellings) {
     const rows = await page.$$eval('table.ordinance-section__table.clause-1, table.table-style-2', (tables, rowPrefix) => {
       const table = tables.find((candidate) => [...candidate.querySelectorAll('tr:first-child th, tr:first-child td')].some((cell) => cell.innerText.trim().toLowerCase() === 'standard'))
       if (!table) return []
-      const tableRows = [...table.querySelectorAll('tr')]
-      return tableRows.slice(1).map((row) => [...row.querySelectorAll('th,td')].map((cell) => cell.innerText.replace(/\s+/g, ' ').trim())).map((cells) => ({ cells, standardIndex: cells.findIndex((cell) => new RegExp(`(?:^|\\s|and )${rowPrefix}\\d+(?:-\\d+)?\\b`, 'i').test(cell)) })).filter(({ standardIndex }) => standardIndex >= 0).map(({ cells, standardIndex }) => { const standard = cells[standardIndex].match(new RegExp(`${rowPrefix}\\d+(?:-\\d+)?`, 'i'))?.[0] || cells[standardIndex]; return { standard, values: cells, text: cells.map((cell, index) => index === standardIndex ? standard : cell).join(' | ') } })
+      let label = ''
+      const tableRows = [...table.querySelectorAll('tr')].slice(1).map((row) => {
+        const cells = [...row.querySelectorAll('th,td')].map((cell) => cell.innerText.replace(/\s+/g, ' ').trim())
+        if (cells.length > 2) { label = cells[0]; return cells }
+        return label ? [label, ...cells] : cells
+      })
+      return tableRows.map((cells) => ({ cells, standardIndex: cells.findIndex((cell) => new RegExp(`(?:^|\\s|and )${rowPrefix}\\d+(?:-\\d+)?\\b`, 'i').test(cell)) })).filter(({ standardIndex }) => standardIndex >= 0).map(({ cells, standardIndex }) => { const standard = cells[standardIndex].match(new RegExp(`${rowPrefix}\\d+(?:-\\d+)?`, 'i'))?.[0] || cells[standardIndex]; return { standard, values: cells, text: cells.map((cell, index) => index === standardIndex ? standard : cell).join(' | ') } })
     }, prefix)
     return { supported: true, url, zone: mapping.zone, clause: mapping.clause, schedule: mapping.schedule, filter: prefix, rows, text: rows.map((row) => row.text).join('\n'), message: rows.length ? 'Planning standards scraped successfully' : 'The table loaded but no matching standards were found' }
   } finally {
@@ -114,6 +127,14 @@ async function queryPlanningLayer(layerId, geometry) {
   const payload = await result.json()
   if (payload.error) throw new Error(payload.error.message || `Vicmap Planning layer ${layerId} returned an error`)
   return payload.features || []
+}
+async function queryPlanningLayerOrEmpty(layerId, geometry) {
+  try {
+    return await queryPlanningLayer(layerId, geometry)
+  } catch (error) {
+    console.warn(`Vicmap Planning layer ${layerId} unavailable, continuing without it: ${error.message}`)
+    return []
+  }
 }
 function geometryExtent(geometry) {
   const points = geometry?.rings?.flat() || []
@@ -158,7 +179,7 @@ function svgMap(features, color, label, sharedExtent = null) {
   const height = 600
   const project = ([x, y]) => `${((x - xmin) / (xmax - xmin)) * width},${height - ((y - ymin) / (ymax - ymin)) * height}`
   const paths = geometries.flatMap((geometry) => geometry.rings.map((ring) => `<path d="M ${ring.map(project).join(' L ')} Z"/>`)).join('')
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}"><g fill="${color}" fill-opacity=".46" stroke="${color}" stroke-width="4">${paths}</g><path d="M 0 ${height / 2} H ${width} M ${width / 2} 0 V ${height}" stroke="#fff" stroke-width="3" opacity=".75"/><text x="28" y="54" font-family="monospace" font-size="22" fill="#172c2a">${label}</text><text x="28" y="580" font-family="monospace" font-size="15" fill="#fff">VICMAP PLANNING / SPATIAL INTERSECT</text></svg>`
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}"><g fill="${color}" fill-opacity=".46" stroke="${color}" stroke-width="4">${paths}</g><path d="M 0 ${height / 2} H ${width} M ${width / 2} 0 V ${height}" stroke="#fff" stroke-width="3" opacity=".75"/><text x="28" y="54" font-family="monospace" font-size="22" fill="#fff" stroke="#172c2a" stroke-width="4" paint-order="stroke" stroke-linejoin="round">${label}</text><text x="28" y="580" font-family="monospace" font-size="15" fill="#fff" stroke="#172c2a" stroke-width="3" paint-order="stroke" stroke-linejoin="round">VICMAP PLANNING / SPATIAL INTERSECT</text></svg>`
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`
 }
 function boundaryOverlayUrl(geometry) {
@@ -267,7 +288,7 @@ app.get('/api/vicmap/lookup', async (request, response) => {
     const feature = await queryParcel(geocoded)
     if (!feature) return response.status(404).json({ error: 'No Vicmap parcel found for this address' })
     const attributes = feature.attributes || {}
-    const [zoneFeatures, overlayFeatures] = await Promise.all([queryPlanningLayer(3, feature.geometry), queryPlanningLayer(2, feature.geometry)])
+    const [zoneFeatures, overlayFeatures] = await Promise.all([queryPlanningLayerOrEmpty(3, feature.geometry), queryPlanningLayerOrEmpty(2, feature.geometry)])
     const zoneAttributes = zoneFeatures[0]?.attributes || {}
     const zone = zoneAttributes.zone_code || ''
     const zoneDescription = zoneAttributes.zone_description || ''
@@ -291,6 +312,184 @@ app.get('/api/planning/standards', async (request, response) => {
     response.json(await scrapePlanningStandards(lga, zone, dwellings))
   } catch (error) {
     response.status(502).json({ error: 'Planning standards scrape failed', detail: error.message })
+  }
+})
+
+async function renderMapImage(browser, base, overlay) {
+  if (!base && !overlay) return null
+  const page = await browser.newPage()
+  try {
+    await page.setViewport({ width: 900, height: 600 })
+    const layer = (src, zIndex) => src ? `<img src="${src}" style="position:absolute;inset:0;width:100%;height:100%;object-fit:fill;z-index:${zIndex}">` : ''
+    await page.setContent(`<!doctype html><body style="margin:0;background:#dfe5ce"><div style="position:relative;width:900px;height:600px;overflow:hidden">${layer(base, 0)}${layer(overlay, 1)}</div></body>`, { waitUntil: 'networkidle0', timeout: 60000 })
+    const element = await page.$('div')
+    const screenshot = await element.screenshot({ type: 'png' })
+    return `data:image/png;base64,${screenshot.toString('base64')}`
+  } finally {
+    await page.close()
+  }
+}
+function requiredSetbackB231(height) { const h = Number(height) || 0; if (h <= 3.6) return 1; if (h <= 6.9) return +(1 + 0.3 * (h - 3.6)).toFixed(2); return +(h - 4.91).toFixed(2) }
+function requiredSetbackB232(height, isSouthFacing) { const h = Number(height) || 0; if (!isSouthFacing) return h > 11 ? 4.5 : 3; return h > 11 ? 9 : 6 }
+function allowableWallOnBoundary(boundaryLength) { const bl = Number(boundaryLength) || 0; if (!bl) return ''; return +(10 + 0.25 * bl).toFixed(2) }
+function maxCoveragePercent(zone) { const z = String(zone || '').trim().toUpperCase(); if (z.startsWith('NRZ')) return 60; if (z.startsWith('GRZ')) return 65; if (z.startsWith('RGZ') || z.startsWith('MUZ') || z.startsWith('HCTZ')) return 70; return 60 }
+function maxCrossoverWidth(frontage) { const f = Number(frontage) || 0; if (!f) return ''; return +(f < 20 ? f * 0.4 : f * 0.33).toFixed(2) }
+function complianceLabel(value) { return value ? 'No' : 'Yes' }
+function documentData(report) {
+  const siteArea = Number(report.siteArea) || 0
+  const gardenArea = Number(report.gardenArea) || 0
+  const canopyArea = Number(report.canopy) || 0
+  const zone = String(report.zone || '').trim().toUpperCase()
+  const gardenClause = zone.startsWith('GRZ') ? '32.08' : zone.startsWith('NRZ') ? '32.09' : zone.startsWith('RGZ') ? '32.07' : 'the applicable zone schedule'
+  const calculatedRequirement = siteArea > 650 ? 35 : siteArea > 500 ? 30 : siteArea >= 400 ? 25 : 0
+  const gardenRequirement = report.gardenRequirement !== undefined && report.gardenRequirement !== '' ? report.gardenRequirement : calculatedRequirement || ''
+  const gardenAchieved = siteArea && gardenArea ? Math.round((gardenArea / siteArea) * 100) : ''
+  const canopyRequired = siteArea >= 1500 ? 20 : siteArea >= 1000 ? 15 : siteArea > 0 ? 10 : ''
+  const canopyAchieved = siteArea && canopyArea ? Math.round((canopyArea / siteArea) * 100) : ''
+  const ss = report.streetSetback || { compliant: false, distance: '', notes: '' }
+  const bh = report.buildingHeightClause || { compliant: false, maxHeight: '', notes: '' }
+  const srs = report.sideRearSetbacks || { compliant: false, method: 'B2-3.1', boundaries: [], notes: '' }
+  const wb = report.wallsOnBoundary || { compliant: false, count: '', walls: [], notes: '' }
+  const sc = report.siteCoverageClause || { compliant: false, notes: '' }
+  const ac = report.accessClause || { compliant: false, proposedWidth: '', treeEncroachmentPct: '', notes: '' }
+  const streetSetbackNotes = (ss.notes || '').trim() || 'Front setback compliant with planning controls.'
+  const buildingHeightNotes = (bh.notes || '').trim() || 'Maximum height is below the requirement of the zoning.'
+  const sideRearBoundaries = (srs.boundaries || []).map((boundary) => {
+    const isSouthFacing = Boolean(boundary.isSouthFacing)
+    const calc = (height) => srs.method === 'B2-3.1' ? requiredSetbackB231(height) : requiredSetbackB232(height, isSouthFacing)
+    const floorsText = (boundary.floors || []).map((floor, index) => `Floor ${index + 1}: ${floor.height || '—'} m height → required ${floor.height ? `${calc(floor.height)} m` : '—'}, achieved ${floor.achieved || '—'} m.`).join('\n') || '(no floors)'
+    const southLabel = srs.method === 'B2-3.2' ? `${isSouthFacing ? 'south-facing (between S 30° W and S 30° E)' : 'not south-facing'}` : ''
+    return { name: boundary.name || '(unnamed boundary)', southLabel, floorsText }
+  })
+  const data = {
+    title: report.address || 'Untitled planning report',
+    date: new Date().toLocaleDateString('en-AU', { day: 'numeric', month: 'long', year: 'numeric' }),
+    gardenClause, gardenRequirement, gardenAchieved, canopyRequired, canopyAchieved,
+    streetSetbackDistance: ss.distance || '',
+    streetSetbackNotes,
+    streetSetbackCompliant: complianceLabel(ss.compliant),
+    streetSetbackAppealRights: complianceLabel(ss.compliant),
+    buildingHeightValue: bh.maxHeight || '',
+    buildingHeightNotes,
+    buildingHeightCompliant: complianceLabel(bh.compliant),
+    buildingHeightAppealRights: complianceLabel(bh.compliant),
+    sideRearSetbacksMethod: srs.method || 'B2-3.1',
+    sideRearSetbacksNotes: (srs.notes || '').trim() || 'All setbacks have been assessed as per their relevance to the boundary. All setbacks and heights are deemed compliant.',
+    sideRearSetbacksCompliant: complianceLabel(srs.compliant),
+    sideRearSetbacksAppealRights: complianceLabel(srs.compliant),
+    sideRearBoundaries,
+    wallsOnBoundaryCompliant: complianceLabel(wb.compliant),
+    wallsOnBoundaryAppealRights: complianceLabel(wb.compliant),
+    wallsOnBoundaryCount: wb.count || String((wb.walls || []).length),
+    wallsOnBoundaryNotes: (wb.notes || '').trim() || 'Total wall on boundary length is within the allowable distance.',
+    wallsOnBoundary: (wb.walls || []).map((wall) => ({
+      elevation: wall.elevation || '',
+      boundaryLength: wall.boundaryLength || '',
+      allowable: allowableWallOnBoundary(wall.boundaryLength),
+      achieved: wall.achieved || '',
+      averageHeight: wall.averageHeight || '',
+      maxHeight: wall.maxHeight || '',
+    })),
+    siteCoverageAchieved: siteArea && Number(report.siteCoverage) ? Math.round((Number(report.siteCoverage) / siteArea) * 1000) / 10 : '',
+    siteCoverageAllowed: maxCoveragePercent(report.zone || ''),
+    siteCoverageCompliant: complianceLabel(sc.compliant),
+    siteCoverageAppealRights: complianceLabel(sc.compliant),
+    siteCoverageNotes: (sc.notes || '').trim() || 'Site coverage within the allowable requirements.',
+    accessCompliant: complianceLabel(ac.compliant),
+    accessAppealRights: complianceLabel(ac.compliant),
+    accessAllowedWidth: maxCrossoverWidth(report.frontage),
+    accessAllowedPercent: Number(report.frontage) && Number(report.frontage) < 20 ? 40 : (Number(report.frontage) ? 33 : 0),
+    accessProposedWidth: ac.proposedWidth || '',
+    accessTreeEncroachmentPct: ac.treeEncroachmentPct || '',
+    accessNotes: (ac.notes || '').trim() || 'Crossover width within the allowable requirement achieved.',
+    treeCanopyCompliant: complianceLabel((report.treeCanopyClause || {}).compliant),
+    treeCanopyAppealRights: complianceLabel((report.treeCanopyClause || {}).compliant),
+    treeCanopyNotes: report.treeCanopyClause?.notes || 'Tree canopy requirements achieved. Relevant diagramming on TP5.',
+    frontFenceNotes: report.frontFenceClause?.notes || 'The maximum height of the front fence is: 0.9m.',
+    dwellingDiversityNotes: report.dwellingDiversityClause?.notes || 'Not applicable as less than 10 dwellings.',
+    parkingLocationNotes: report.parkingLocationClause?.notes || 'All windows within accessways achieve 1m where sills are 1.5m.',
+    streetIntegrationCompliant: complianceLabel(report.streetIntegration?.compliant),
+    streetIntegrationAppealRights: complianceLabel(report.streetIntegration?.compliant),
+    streetIntegrationAllowedWidth: maxCrossoverWidth
+      ? report.frontage ? +(Number(report.frontage) * 0.2).toFixed(2) : ''
+      : '', // 20% of frontage
+    streetIntegrationProposedWidth: report.streetIntegration?.proposedServicesWidth || '',
+    streetIntegrationNotes: report.streetIntegration?.notes || 'All dwellings provided with habitable rooms at either ground or first floor.',
+    entryClauseCompliant: complianceLabel(report.entryClause?.compliant),
+    entryClauseAppealRights: complianceLabel(report.entryClause?.compliant),
+    entryNotes: report.entryClause?.notes || 'All entry porches covered by 1.2 x 1.2 (1.44m2) canopy.',
+    privateOpenSpaceNotes: report.privateOpenSpaceClause?.notes || 'All dwellings supplied with minimum 25m2 S.P.O.S.',
+    solarAccessOpenSpaceNotes: report.solarAccessOpenSpaceClause?.notes || 'All dwellings achieve required setbacks to achieve solar requirements to S.P.O.S.',
+    functionalLayoutNotes: report.functionalLayoutClause?.notes || 'All minimum room dimensions and areas achieved.',
+    roomDepthNotes: report.roomDepthClause?.notes || 'All dwellings provide dual aspect to all Living / kitchen / dining areas.',
+    daylightNewWindowsNotes: report.daylightNewWindowsClause?.notes || 'All new habitable room windows are provided with 3m2 clear to sky.',
+    naturalVentilationNotes: report.naturalVentilationClause?.notes || 'Relevant diagramming on TP5.',
+    storageNotes: report.storageClause?.notes || '6m³ storage provided to all dwellings.',
+    accessibilityNotes: report.accessibilityClause?.notes || 'Not applicable to this application.',
+    daylightExistingWindowsNotes: report.daylightExistingWindowsClause?.notes || 'All existing habitable room windows have been provided with 3m2 clear to sky as required.',
+    northFacingWindowsNotes: report.northFacingWindowsClause?.notes || 'All north facing windows are setback appropriately from the proposal via compliant dimensions.',
+    overshadowingSosNotes: report.overshadowingSosClause?.notes || 'All shadowing calculated on TP6 - TP9. This is assessed as compliant.',
+    overlookingNotes: report.overlookingClause?.notes || 'Overlooking arc annotated on plans. All relevant floor levels have been dimensioned. Screening has been annotated where required.',
+    internalViewsNotes: report.internalViewsClause?.notes || 'Proposal does not propose overlooking internally.',
+    stormwaterCompliant: complianceLabel(report.stormwaterManagement?.compliant),
+    stormwaterAppealRights: complianceLabel(report.stormwaterManagement?.compliant),
+    stormwaterManagementSystems: [
+      report.stormwaterManagement?.rainwaterTank ? `Rainwater tank${report.stormwaterManagement.rainwaterTankSize ? ` (${report.stormwaterManagement.rainwaterTankSize} L)` : ''}` : '',
+      report.stormwaterManagement?.permeablePaving ? 'Permeable paving' : '',
+      report.stormwaterManagement?.rainGardens ? 'Rain gardens' : '',
+    ].filter(Boolean).join(', ') || '—',
+    stormwaterAreasReuse: [
+      report.stormwaterManagement?.reuseSanitary ? 'Sanitary flushing' : '',
+      report.stormwaterManagement?.reuseLaundry ? 'Laundry' : '',
+      report.stormwaterManagement?.reuseGarden ? 'Garden watering' : '',
+    ].filter(Boolean).join(', ') || '—',
+    stormwaterRainwaterTankSize: report.stormwaterManagement?.rainwaterTankSize || '',
+    stormwaterNotes: ((report.stormwaterManagement || {}).notes || '').trim(),
+    overshadowingSolarNotes: report.overshadowingSolarClause?.notes || 'Neighbouring solar facilities are sited appropriate distance from boundary. No shadowing occurs over facilities.',
+    rooftopSolarNotes: report.rooftopSolarClause?.notes || 'Refer to dedicated area on page no. TP4 for further details.',
+    solarProtectionNotes: report.solarProtectionClause?.notes || 'Fixed shading devices have been annotated, dimensioned and tagged on plans and shown on elevations.',
+    wasteRecyclingNotes: report.wasteRecyclingClause?.notes || 'Refer to dedicated area on page no. TP5 for further details.',
+    noiseImpactsNotes: report.noiseImpactsClause?.notes || 'All mechanical plant equipment and storage have been located away from habitable windows. All have been screened in their respective yards away from public using fencing.',
+    energyEfficiencyNotes: report.energyEfficiencyClause?.notes || 'Not applicable to this application.',
+    openSpace: (report.openSpace || []).map((space, index) => ({ label: `Dwelling ${index + 1}`, secluded: space.secluded || '', total: space.total || '' })),
+    existingTrees: (report.existingTrees || []).map((tree) => ({ number: tree.number || '', species: tree.species || '', spreadHeight: tree.spreadHeight || '', status: tree.status || '', location: tree.location || '', retain: tree.retain || '' })),
+    noExistingTrees: Boolean(report.existingTreesNone)
+  }
+  for (const key of ['address', 'zone', 'zoneDescription', 'overlays', 'lga', 'dwellings', 'storeys', 'parking', 'parkingOther', 'existing', 'siteArea', 'frontage', 'frontageStreet', 'siteCoverage', 'permeable', 'gardenArea', 'canopy', 'maxHeight', 'summary', 'ordinance', 'carParking']) data[key] = report[key] || ''
+  return data
+}
+
+app.post('/api/report/document', async (request, response) => {
+  if (!fs.existsSync(templateFile)) return response.status(400).json({ error: 'No Word template found. Add your template to server/template.docx — see docs/template-tags.md for the available tags.' })
+  try {
+    const report = request.body || {}
+    const images = report.images || {}
+    const data = documentData(report)
+    const overlaySources = (images.overlays || []).filter(Boolean).slice(0, 4)
+    if (images.satellite || images.satelliteBoundary || images.zoning || overlaySources.length) {
+      const browser = await launchBrowser()
+      try {
+        data.satelliteImage = await renderMapImage(browser, images.satellite, images.satelliteBoundary)
+        data.zoningMap = await renderMapImage(browser, images.satellite, images.zoning)
+        for (const [index, overlay] of overlaySources.entries()) data[`overlayMap${index + 1}`] = await renderMapImage(browser, images.satellite, overlay)
+      } finally {
+        await browser.close()
+      }
+    }
+    const imageModule = new ImageModule({ centered: false, fileType: 'docx', getImage: (tagValue) => Buffer.from(tagValue.split(',')[1], 'base64'), getSize: () => [480, 320] })
+    const zip = new PizZip(fs.readFileSync(templateFile, 'binary'))
+    const doc = new Docxtemplater(zip, { modules: [imageModule], linebreaks: true, paragraphLoop: true })
+    doc.render(data)
+    const outputZip = doc.getZip()
+    let drawingId = 0
+    const fixedXml = outputZip.file('word/document.xml').asText().replace(/<wp:docPr id="\d+"/g, () => `<wp:docPr id="${++drawingId}"`)
+    outputZip.file('word/document.xml', fixedXml)
+    const buffer = outputZip.generate({ type: 'nodebuffer', compression: 'DEFLATE' })
+    response.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document')
+    response.setHeader('Content-Disposition', 'attachment; filename="planning-report.docx"')
+    response.send(buffer)
+  } catch (error) {
+    response.status(502).json({ error: 'Document generation failed', detail: error.message })
   }
 })
 
