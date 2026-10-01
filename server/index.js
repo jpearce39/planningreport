@@ -21,7 +21,7 @@ const serviceSpatialReference = '3857'
 
 app.use(express.json({ limit: '25mb' }))
 app.use((request, response, next) => {
-  response.setHeader('Access-Control-Allow-Origin', request.headers.origin || 'http://localhost:5173')
+  response.setHeader('Access-Control-Allow-Origin', process.env.FRONTEND_URL || request.headers.origin || 'http://localhost:5173')
   response.setHeader('Access-Control-Allow-Credentials', 'true')
   response.setHeader('Access-Control-Allow-Headers', 'Content-Type')
   response.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS')
