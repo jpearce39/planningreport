@@ -6,10 +6,10 @@ Town planning report generator for Victorian residential development projects.
 
 ```bash
 npm install
-npm run dev:full
+DATABASE_URL=postgresql://localhost/planning_report npm run dev:full
 ```
 
-`dev:full` starts the Express API on port 3001 and the Vite dev server together; Vite proxies `/api` requests to the API. To run them separately, use `npm run server` and `npm run dev`. Set the `PORT` environment variable to change the API port.
+Create a local PostgreSQL database first. `dev:full` starts the Express API on port 3001 and the Vite dev server together; Vite proxies `/api` requests to the API. To run them separately, use `DATABASE_URL=... npm run server` and `npm run dev`. Set the `PORT` environment variable to change the API port.
 
 Create a production build with `npm run build`.
 
@@ -22,7 +22,7 @@ Deploy the frontend as a Cloudflare Pages project using the Vite settings:
 - Root directory: `/`
 - Production environment variable: `VITE_API_URL=https://planning-report-api.onrender.com`
 
-The API remains on Render; Pages serves only the generated static frontend. In the Render service, set `NODE_ENV=production` and `CORS_ORIGIN` to the exact Pages site origin, for example `https://your-project.pages.dev`. Add any custom frontend domain as another comma-separated origin. Render supplies `PORT` automatically; the API listens on that port (Render commonly assigns `10000`).
+The API remains on Render; Pages serves only the generated static frontend. Create a Render PostgreSQL database in the same region as the API service, then set the service's `DATABASE_URL` to the database's internal connection URL. Also set `NODE_ENV=production` and `CORS_ORIGIN` to the exact Pages site origin, for example `https://your-project.pages.dev`. Add any custom frontend domain as another comma-separated origin. Render supplies `PORT` automatically; the API listens on that port (Render commonly assigns `10000`).
 
 Authentication uses cross-origin cookies, so the API allows credentials only from the configured origins and sets `SameSite=None; Secure` in production. Some browsers restrict third-party cookies between unrelated domains; for reliable sign-in, use a custom frontend domain and a same-site API hostname (for example, `app.example.com` and `api.example.com`). Update `VITE_API_URL` and `CORS_ORIGIN` to those deployed origins when using custom domains.
 
@@ -85,7 +85,7 @@ Map images are rendered server-side with the existing Puppeteer/Chromium setup: 
 
 ## Backend
 
-Run the API separately with `npm run server` (port 3001 by default), or run both services with `npm run dev:full`. The API uses an HTTP-only cookie session (`plan_vic_session`, 30-day expiry) and stores users, sessions, and projects in `data/store.json` for local development. Passwords are salted and hashed with Node's `scrypt`; plaintext passwords are never stored.
+Run the API separately with `DATABASE_URL=... npm run server` (port 3001 by default), or run both services with `DATABASE_URL=... npm run dev:full`. The API stores users, sessions, and projects in PostgreSQL; report data is stored as JSONB. On startup, it creates missing tables and performs a one-time import from `data/store.json` if that legacy file exists. The API uses an HTTP-only cookie session (`plan_vic_session`, 30-day expiry). Passwords are salted and hashed with Node's `scrypt`; plaintext passwords are never stored.
 
 Available routes:
 

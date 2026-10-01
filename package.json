@@ -16,6 +16,7 @@
     "docxtemplater": "^3.71.0",
     "docxtemplater-image-module-free": "^1.1.1",
     "express": "^5.1.0",
+    "pg": "^8.23.1",
     "pizzip": "^3.3.0",
     "puppeteer": "^25.10.0",
     "react": "^19.2.8",

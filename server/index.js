@@ -2,6 +2,7 @@ import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import express from 'express'
+import { initializeDatabase, pool } from './database.js'
 import puppeteer from 'puppeteer'
 import chromium from '@sparticuz/chromium'
 import PizZip from 'pizzip'
@@ -12,8 +13,6 @@ const app = express()
 const port = Number(process.env.PORT || 3001)
 const allowedOrigins = new Set((process.env.CORS_ORIGIN || 'http://localhost:5173').split(',').map((origin) => origin.trim()).filter(Boolean))
 const sessionCookieAttributes = `HttpOnly; Path=/; SameSite=${process.env.NODE_ENV === 'production' ? 'None; Secure' : 'Lax'}`
-const dataDirectory = path.resolve('data')
-const dataFile = path.join(dataDirectory, 'store.json')
 const templateFile = path.resolve('server', 'template.docx')
 const vicmapUrl = 'https://services-ap1.arcgis.com/P744lA0wf4LlBZ84/arcgis/rest/services/Vicmap_Parcel/FeatureServer/0/query'
 const planningUrl = 'https://services-ap1.arcgis.com/P744lA0wf4LlBZ84/arcgis/rest/services/Vicmap_Planning/FeatureServer'
@@ -35,17 +34,6 @@ app.use((request, response, next) => {
   next()
 })
 
-function readStore() {
-  fs.mkdirSync(dataDirectory, { recursive: true })
-  if (!fs.existsSync(dataFile)) return { users: [], projects: [], sessions: [] }
-  return JSON.parse(fs.readFileSync(dataFile, 'utf8'))
-}
-
-function writeStore(store) {
-  fs.mkdirSync(dataDirectory, { recursive: true })
-  fs.writeFileSync(dataFile, JSON.stringify(store, null, 2))
-}
-
 function id() { return crypto.randomUUID() }
 function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
   return { salt, hash: crypto.scryptSync(password, salt, 64).toString('hex') }
@@ -56,15 +44,17 @@ function validPassword(password, user) {
 function cookieValue(request, name) {
   return (request.headers.cookie || '').split(';').map((part) => part.trim().split('=')).find(([key]) => key === name)?.[1]
 }
-function userFromRequest(request) {
+async function userFromRequest(request) {
   const token = cookieValue(request, 'plan_vic_session')
   if (!token) return null
-  const store = readStore()
-  const session = store.sessions.find((item) => item.token === token && item.expiresAt > Date.now())
-  return session ? store.users.find((user) => user.id === session.userId) : null
+  const result = await pool.query(
+    'SELECT users.id, users.name, users.email FROM users JOIN sessions ON sessions.user_id = users.id WHERE sessions.token = $1 AND sessions.expires_at > $2',
+    [token, Date.now()],
+  )
+  return result.rows[0] || null
 }
-function requireUser(request, response, next) {
-  const user = userFromRequest(request)
+async function requireUser(request, response, next) {
+  const user = await userFromRequest(request)
   if (!user) return response.status(401).json({ error: 'Authentication required' })
   request.user = user
   next()
@@ -223,66 +213,71 @@ async function queryParcel(point) {
   return payload.features?.[0] || null
 }
 
-app.post('/api/auth/register', (request, response) => {
+app.post('/api/auth/register', async (request, response) => {
   const { name, email, password } = request.body || {}
   if (!name || !email || !password || password.length < 8) return response.status(400).json({ error: 'Name, email and a password of at least 8 characters are required' })
-  const store = readStore()
   const normalizedEmail = email.trim().toLowerCase()
-  if (store.users.some((user) => user.email === normalizedEmail)) return response.status(409).json({ error: 'An account with that email already exists' })
   const credentials = hashPassword(password)
   const user = { id: id(), name: name.trim(), email: normalizedEmail, passwordHash: credentials.hash, salt: credentials.salt, createdAt: Date.now() }
-  store.users.push(user)
-  writeStore(store)
+  try {
+    await pool.query('INSERT INTO users (id, name, email, password_hash, salt, created_at) VALUES ($1, $2, $3, $4, $5, $6)', [user.id, user.name, user.email, user.passwordHash, user.salt, user.createdAt])
+  } catch (error) {
+    if (error.code === '23505') return response.status(409).json({ error: 'An account with that email already exists' })
+    throw error
+  }
   return createSession(response, user)
 })
 
-app.post('/api/auth/login', (request, response) => {
+app.post('/api/auth/login', async (request, response) => {
   const { email, password } = request.body || {}
-  const store = readStore()
-  const user = store.users.find((item) => item.email === String(email || '').trim().toLowerCase())
+  const result = await pool.query('SELECT id, name, email, password_hash AS "passwordHash", salt FROM users WHERE email = $1', [String(email || '').trim().toLowerCase()])
+  const user = result.rows[0]
   if (!user || !validPassword(String(password || ''), user)) return response.status(401).json({ error: 'Email or password is incorrect' })
   return createSession(response, user)
 })
 
-function createSession(response, user) {
+async function createSession(response, user) {
   const token = id()
-  const store = readStore()
-  store.sessions = store.sessions.filter((session) => session.expiresAt > Date.now())
-  store.sessions.push({ token, userId: user.id, expiresAt: Date.now() + 1000 * 60 * 60 * 24 * 30 })
-  writeStore(store)
+  const expiresAt = Date.now() + 1000 * 60 * 60 * 24 * 30
+  await pool.query('DELETE FROM sessions WHERE expires_at <= $1', [Date.now()])
+  await pool.query('INSERT INTO sessions (token, user_id, expires_at) VALUES ($1, $2, $3)', [token, user.id, expiresAt])
   response.setHeader('Set-Cookie', `plan_vic_session=${token}; ${sessionCookieAttributes}; Max-Age=2592000`)
   return response.json({ user: publicUser(user) })
 }
 
-app.post('/api/auth/logout', (request, response) => {
+app.post('/api/auth/logout', async (request, response) => {
   const token = cookieValue(request, 'plan_vic_session')
-  const store = readStore()
-  store.sessions = store.sessions.filter((session) => session.token !== token)
-  writeStore(store)
+  if (token) await pool.query('DELETE FROM sessions WHERE token = $1', [token])
   response.setHeader('Set-Cookie', `plan_vic_session=; ${sessionCookieAttributes}; Max-Age=0`)
   response.sendStatus(204)
 })
-app.get('/api/auth/me', (request, response) => {
-  const user = userFromRequest(request)
+app.get('/api/auth/me', async (request, response) => {
+  const user = await userFromRequest(request)
   response.json({ user: user ? publicUser(user) : null })
 })
 
-app.get('/api/projects', requireUser, (request, response) => {
-  const store = readStore()
-  response.json({ projects: store.projects.filter((project) => project.userId === request.user.id).sort((a, b) => b.updatedAt - a.updatedAt) })
+app.get('/api/projects', requireUser, async (request, response) => {
+  const result = await pool.query('SELECT id, user_id AS "userId", name, report, created_at::double precision AS "createdAt", updated_at::double precision AS "updatedAt" FROM projects WHERE user_id = $1 ORDER BY updated_at DESC', [request.user.id])
+  response.json({ projects: result.rows })
 })
-app.post('/api/projects', requireUser, (request, response) => {
+app.post('/api/projects', requireUser, async (request, response) => {
   const project = { id: id(), userId: request.user.id, name: request.body.name || request.body.address || 'Untitled planning report', report: request.body.report || {}, createdAt: Date.now(), updatedAt: Date.now() }
-  const store = readStore(); store.projects.push(project); writeStore(store); response.status(201).json({ project })
+  await pool.query('INSERT INTO projects (id, user_id, name, report, created_at, updated_at) VALUES ($1, $2, $3, $4::jsonb, $5, $6)', [project.id, project.userId, project.name, JSON.stringify(project.report), project.createdAt, project.updatedAt])
+  response.status(201).json({ project })
 })
-app.put('/api/projects/:projectId', requireUser, (request, response) => {
-  const store = readStore(); const project = store.projects.find((item) => item.id === request.params.projectId && item.userId === request.user.id)
-  if (!project) return response.status(404).json({ error: 'Project not found' })
-  project.report = request.body.report || project.report; project.name = request.body.name || project.name; project.updatedAt = Date.now(); writeStore(store); response.json({ project })
+app.put('/api/projects/:projectId', requireUser, async (request, response) => {
+  const updatedAt = Date.now()
+  const result = await pool.query(
+    'UPDATE projects SET report = COALESCE($1::jsonb, report), name = COALESCE($2, name), updated_at = $3 WHERE id = $4 AND user_id = $5 RETURNING id, user_id AS "userId", name, report, created_at::double precision AS "createdAt", updated_at::double precision AS "updatedAt"',
+    [request.body.report ? JSON.stringify(request.body.report) : null, request.body.name || null, updatedAt, request.params.projectId, request.user.id],
+  )
+  if (!result.rowCount) return response.status(404).json({ error: 'Project not found' })
+  response.json({ project: result.rows[0] })
 })
-app.delete('/api/projects/:projectId', requireUser, (request, response) => {
-  const store = readStore(); const count = store.projects.length; store.projects = store.projects.filter((item) => !(item.id === request.params.projectId && item.userId === request.user.id))
-  if (store.projects.length === count) return response.status(404).json({ error: 'Project not found' }); writeStore(store); response.sendStatus(204)
+app.delete('/api/projects/:projectId', requireUser, async (request, response) => {
+  const result = await pool.query('DELETE FROM projects WHERE id = $1 AND user_id = $2', [request.params.projectId, request.user.id])
+  if (!result.rowCount) return response.status(404).json({ error: 'Project not found' })
+  response.sendStatus(204)
 })
 
 app.get('/api/vicmap/lookup', async (request, response) => {
@@ -499,4 +494,9 @@ app.post('/api/report/document', async (request, response) => {
   }
 })
 
-app.listen(port, () => console.log(`PLAN / VIC API listening on http://localhost:${port}`))
+initializeDatabase().then(() => {
+  app.listen(port, () => console.log(`PLAN / VIC API listening on http://localhost:${port}`))
+}).catch((error) => {
+  console.error('Failed to initialize PostgreSQL:', error)
+  process.exit(1)
+})
