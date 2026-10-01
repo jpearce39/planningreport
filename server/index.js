@@ -11,7 +11,7 @@ import ImageModule from 'docxtemplater-image-module-free'
 
 const app = express()
 const port = Number(process.env.PORT || 3001)
-const allowedOrigins = new Set((process.env.CORS_ORIGIN || 'http://localhost:5173').split(',').map((origin) => origin.trim()).filter(Boolean))
+const allowedOrigins = new Set((process.env.CORS_ORIGIN || process.env.FRONTEND_URL || 'http://localhost:5173').split(',').map((origin) => origin.trim()).filter(Boolean))
 const sessionCookieAttributes = `HttpOnly; Path=/; SameSite=${process.env.NODE_ENV === 'production' ? 'None; Secure' : 'Lax'}`
 const templateFile = path.resolve('server', 'template.docx')
 const vicmapUrl = 'https://services-ap1.arcgis.com/P744lA0wf4LlBZ84/arcgis/rest/services/Vicmap_Parcel/FeatureServer/0/query'
