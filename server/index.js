@@ -10,6 +10,8 @@ import ImageModule from 'docxtemplater-image-module-free'
 
 const app = express()
 const port = Number(process.env.PORT || 3001)
+const allowedOrigins = new Set((process.env.CORS_ORIGIN || 'http://localhost:5173').split(',').map((origin) => origin.trim()).filter(Boolean))
+const sessionCookieAttributes = `HttpOnly; Path=/; SameSite=${process.env.NODE_ENV === 'production' ? 'None; Secure' : 'Lax'}`
 const dataDirectory = path.resolve('data')
 const dataFile = path.join(dataDirectory, 'store.json')
 const templateFile = path.resolve('server', 'template.docx')
@@ -21,10 +23,14 @@ const serviceSpatialReference = '3857'
 
 app.use(express.json({ limit: '25mb' }))
 app.use((request, response, next) => {
-  response.setHeader('Access-Control-Allow-Origin', request.headers.origin || 'http://localhost:5173')
-  response.setHeader('Access-Control-Allow-Credentials', 'true')
-  response.setHeader('Access-Control-Allow-Headers', 'Content-Type')
-  response.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS')
+  const origin = request.headers.origin
+  if (origin && allowedOrigins.has(origin)) {
+    response.setHeader('Access-Control-Allow-Origin', origin)
+    response.setHeader('Access-Control-Allow-Credentials', 'true')
+    response.setHeader('Access-Control-Allow-Headers', 'Content-Type')
+    response.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS')
+    response.vary('Origin')
+  }
   if (request.method === 'OPTIONS') return response.sendStatus(204)
   next()
 })
@@ -244,7 +250,7 @@ function createSession(response, user) {
   store.sessions = store.sessions.filter((session) => session.expiresAt > Date.now())
   store.sessions.push({ token, userId: user.id, expiresAt: Date.now() + 1000 * 60 * 60 * 24 * 30 })
   writeStore(store)
-  response.setHeader('Set-Cookie', `plan_vic_session=${token}; HttpOnly; Path=/; SameSite=Lax; Max-Age=2592000`)
+  response.setHeader('Set-Cookie', `plan_vic_session=${token}; ${sessionCookieAttributes}; Max-Age=2592000`)
   return response.json({ user: publicUser(user) })
 }
 
@@ -253,7 +259,7 @@ app.post('/api/auth/logout', (request, response) => {
   const store = readStore()
   store.sessions = store.sessions.filter((session) => session.token !== token)
   writeStore(store)
-  response.setHeader('Set-Cookie', 'plan_vic_session=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0')
+  response.setHeader('Set-Cookie', `plan_vic_session=; ${sessionCookieAttributes}; Max-Age=0`)
   response.sendStatus(204)
 })
 app.get('/api/auth/me', (request, response) => {

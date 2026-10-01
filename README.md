@@ -13,6 +13,19 @@ npm run dev:full
 
 Create a production build with `npm run build`.
 
+## Deploy to Cloudflare Pages
+
+Deploy the frontend as a Cloudflare Pages project using the Vite settings:
+
+- Build command: `npm run build`
+- Build output directory: `dist`
+- Root directory: `/`
+- Production environment variable: `VITE_API_URL=https://planning-report-api.onrender.com`
+
+The API remains on Render; Pages serves only the generated static frontend. In the Render service, set `NODE_ENV=production` and `CORS_ORIGIN` to the exact Pages site origin, for example `https://your-project.pages.dev`. Add any custom frontend domain as another comma-separated origin. Render supplies `PORT` automatically; the API listens on that port (Render commonly assigns `10000`).
+
+Authentication uses cross-origin cookies, so the API allows credentials only from the configured origins and sets `SameSite=None; Secure` in production. Some browsers restrict third-party cookies between unrelated domains; for reliable sign-in, use a custom frontend domain and a same-site API hostname (for example, `app.example.com` and `api.example.com`). Update `VITE_API_URL` and `CORS_ORIGIN` to those deployed origins when using custom domains.
+
 ## Workflow data reference
 
 The report builder stores one report object in browser `localStorage` under `planning-report`, with the current wizard step under `planning-report-step`. Every wizard screen writes to that object, so **Save & exit** and browser refreshes preserve the current draft. When signed in, saving also syncs the draft to the backend projects API; the local copy remains the fallback when signed out or when the API is offline.
