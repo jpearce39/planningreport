@@ -29,18 +29,24 @@ Rules:
 | `{frontage}` | Frontage (m) |
 | `{frontageStreet}` | Street the frontage presents to |
 | `{siteCoverage}` | Site coverage (m²) |
+| `{siteCoveragePercent}` / `{siteCoveragePercentage}` | Site coverage % computed from `siteCoverage / siteArea` |
 | `{permeable}` | Permeable area (m²) |
+| `{permeableAreaPercent}` / `{permeableAreaPercentage}` | Permeable area % computed from `permeable / siteArea` |
 | `{gardenArea}` | Garden area (m²) |
 | `{canopy}` | Canopy area (m²) |
+| `{canopyAreaPercent}` / `{canopyAreaPercentage}` | Canopy area % computed from `canopy / siteArea` |
 | `{summary}` | Development summary (up to 500 words) |
 | `{ordinance}` | Zone standards table text, one standard per line |
 | `{maxHeight}` | Maximum building height |
 | `{gardenRequirement}` | Minimum garden area requirement (%) |
+| `{gardenRequirementArea}` | Minimum garden area requirement in square metres (m²) |
 | `{gardenAchieved}` | Achieved garden area (%) |
 | `{gardenClause}` | Zone clause used for the requirement, e.g. `32.08` |
 | `{carParking}` | Clause 52.06 car parking statement |
 | `{canopyRequired}` | Required canopy area percentage under Clause 52.37 (%) |
+| `{canopyRequiredArea}` | Required canopy area in square metres (m²) |
 | `{canopyAchieved}` | Achieved canopy percentage against the 52.37 requirement (%) |
+| `{treeCanopyCount}` | Number of canopy trees proposed under B2-7 |
 
 ## Private open space loop
 
@@ -156,7 +162,8 @@ Renders nothing when no walls have been added.
 | Tag | Content |
 | --- | --- |
 | `{siteCoverageCompliant}` / `{siteCoverageAppealRights}` | Compliance and appeal-rights |
-| `{siteCoverageAchieved}` | Site coverage % computed from `siteCoverage / siteArea` |
+| `{siteCoverageAchieved}` | Alias for site coverage % computed from `siteCoverage / siteArea` |
+| `{siteCoveragePercent}` / `{siteCoveragePercentage}` | Raw site coverage % computed from `siteCoverage / siteArea` |
 | `{siteCoverageAllowed}` | Maximum % allowed by the zone (60/65/70) |
 | `{siteCoverageNotes}` | Pre-filled with default text |
 
@@ -170,6 +177,69 @@ Renders nothing when no walls have been added.
 | `{accessProposedWidth}` | User-entered proposed crossover width |
 | `{accessTreeEncroachmentPct}` | User-entered tree encroachment percentage |
 | `{accessNotes}` | Pre-filled with default text |
+
+## Clause 55 B2-7 onwards
+
+The later compliance clauses expose the same appeal-rights pattern as the earlier B2-1 to B2-6 tags. Use the boolean values directly or keep them as text in a template.
+
+| Tag | Content |
+| --- | --- |
+| `{treeCanopyCompliant}` / `{treeCanopyAppealRights}` | Compliance and appeal-rights for B2-7 |
+| `{treeCanopyNotes}` | Notes for B2-7 tree canopy |
+| `{frontFenceCompliant}` / `{frontFenceAppealRights}` | Compliance and appeal-rights for B2-8 |
+| `{frontFenceNotes}` | Notes for B2-8 front fence |
+| `{dwellingDiversityCompliant}` / `{dwellingDiversityAppealRights}` | Compliance and appeal-rights for B2-9 |
+| `{dwellingDiversityNotes}` | Notes for B2-9 dwelling diversity |
+| `{parkingLocationCompliant}` / `{parkingLocationAppealRights}` | Compliance and appeal-rights for B3-2 |
+| `{parkingLocationNotes}` | Notes for B3-2 parking location |
+| `{streetIntegrationCompliant}` / `{streetIntegrationAppealRights}` | Compliance and appeal-rights for B3-3 |
+| `{streetIntegrationAllowedWidth}` / `{streetIntegrationProposedWidth}` | Allowed and proposed services width (m) for B3-3 |
+| `{streetIntegrationNotes}` | Notes for B3-3 street integration |
+| `{entryClauseCompliant}` / `{entryClauseAppealRights}` | Compliance and appeal-rights for B3-4 |
+| `{entryNotes}` | Notes for B3-4 entry |
+| `{privateOpenSpaceCompliant}` / `{privateOpenSpaceAppealRights}` | Compliance and appeal-rights for B3-5 |
+| `{privateOpenSpaceNotes}` | Notes for B3-5 private open space |
+| `{solarAccessOpenSpaceCompliant}` / `{solarAccessOpenSpaceAppealRights}` | Compliance and appeal-rights for B3-6 |
+| `{solarAccessOpenSpaceNotes}` | Notes for B3-6 solar access to open space |
+| `{functionalLayoutCompliant}` / `{functionalLayoutAppealRights}` | Compliance and appeal-rights for B3-7 |
+| `{functionalLayoutNotes}` | Notes for B3-7 functional layout |
+| `{roomDepthCompliant}` / `{roomDepthAppealRights}` | Compliance and appeal-rights for B3-8 |
+| `{roomDepthNotes}` | Notes for B3-8 room depth |
+| `{daylightNewWindowsCompliant}` / `{daylightNewWindowsAppealRights}` | Compliance and appeal-rights for B3-9 |
+| `{daylightNewWindowsNotes}` | Notes for B3-9 daylight to new windows |
+| `{naturalVentilationCompliant}` / `{naturalVentilationAppealRights}` | Compliance and appeal-rights for B3-10 |
+| `{naturalVentilationNotes}` | Notes for B3-10 natural ventilation |
+| `{storageCompliant}` / `{storageAppealRights}` | Compliance and appeal-rights for B3-11 |
+| `{storageNotes}` | Notes for B3-11 storage |
+| `{accessibilityCompliant}` / `{accessibilityAppealRights}` | Compliance and appeal-rights for B3-12 |
+| `{accessibilityNotes}` | Notes for B3-12 accessibility |
+| `{daylightExistingWindowsCompliant}` / `{daylightExistingWindowsAppealRights}` | Compliance and appeal-rights for B4-1 |
+| `{daylightExistingWindowsNotes}` | Notes for B4-1 daylight to existing windows |
+| `{northFacingWindowsCompliant}` / `{northFacingWindowsAppealRights}` | Compliance and appeal-rights for B4-2 |
+| `{northFacingWindowsNotes}` | Notes for B4-2 existing north-facing windows |
+| `{overshadowingSosCompliant}` / `{overshadowingSosAppealRights}` | Compliance and appeal-rights for B4-3 |
+| `{overshadowingSosNotes}` | Notes for B4-3 overshadowing secluded open space |
+| `{overlookingCompliant}` / `{overlookingAppealRights}` | Compliance and appeal-rights for B4-4 |
+| `{overlookingNotes}` | Notes for B4-4 overlooking |
+| `{internalViewsCompliant}` / `{internalViewsAppealRights}` | Compliance and appeal-rights for B4-5 |
+| `{internalViewsNotes}` | Notes for B4-5 internal views |
+| `{stormwaterCompliant}` / `{stormwaterAppealRights}` | Compliance and appeal-rights for B5-1 |
+| `{stormwaterManagementSystems}` | Proposed stormwater management systems |
+| `{stormwaterAreasReuse}` | Water-reuse systems included in the proposal |
+| `{stormwaterRainwaterTankSize}` | Rainwater tank size in litres |
+| `{stormwaterNotes}` | Notes for B5-1 stormwater management |
+| `{overshadowingSolarCompliant}` / `{overshadowingSolarAppealRights}` | Compliance and appeal-rights for B5-2 |
+| `{overshadowingSolarNotes}` | Notes for B5-2 overshadowing domestic solar |
+| `{rooftopSolarCompliant}` / `{rooftopSolarAppealRights}` | Compliance and appeal-rights for B5-3 |
+| `{rooftopSolarNotes}` | Notes for B5-3 rooftop solar energy generation |
+| `{solarProtectionCompliant}` / `{solarProtectionAppealRights}` | Compliance and appeal-rights for B5-4 |
+| `{solarProtectionNotes}` | Notes for B5-4 solar protection to new north-facing windows |
+| `{wasteRecyclingCompliant}` / `{wasteRecyclingAppealRights}` | Compliance and appeal-rights for B5-5 |
+| `{wasteRecyclingNotes}` | Notes for B5-5 waste & recycling |
+| `{noiseImpactsCompliant}` / `{noiseImpactsAppealRights}` | Compliance and appeal-rights for B5-6 |
+| `{noiseImpactsNotes}` | Notes for B5-6 noise impacts |
+| `{energyEfficiencyCompliant}` / `{energyEfficiencyAppealRights}` | Compliance and appeal-rights for B5-7 |
+| `{energyEfficiencyNotes}` | Notes for B5-7 energy efficiency |
 
 ## Image tags
 
