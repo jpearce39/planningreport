@@ -9,6 +9,7 @@ const starterTemplatePath = path.join(process.cwd(), 'server', 'build-starter-te
 const requiredDocTags = [
   '{siteCoveragePercent}',
   '{siteCoveragePercentage}',
+  '{%coverImage}',
   '{permeableAreaPercent}',
   '{permeableAreaPercentage}',
   '{canopyAreaPercent}',
@@ -43,6 +44,7 @@ test('template reference documents the later clause tags', () => {
 
 test('starter template uses dynamic compliance tags for later clauses', () => {
   const template = fs.readFileSync(starterTemplatePath, 'utf8')
+  assert.ok(template.includes('{%coverImage}'), 'Cover image tag missing from starter template')
   assert.ok(template.includes('{frontFenceCompliant}'), 'B2-8 front fence compliance tag missing from starter template')
   assert.ok(template.includes('{frontFenceAppealRights}'), 'B2-8 front fence appeal-rights tag missing from starter template')
   assert.ok(template.includes('{stormwaterCompliant}'), 'B5-1 stormwater compliance tag missing from starter template')

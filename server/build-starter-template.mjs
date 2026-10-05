@@ -12,6 +12,7 @@ const body = [
   heading('{title}'),
   paragraph('Town planning report · Prepared {date}'),
   heading('Project overview'),
+  paragraph('{%coverImage}'),
   paragraph('Address: {address}'),
   paragraph('Zone: {zone} — {zoneDescription}'),
   paragraph('Overlays: {overlays}'),

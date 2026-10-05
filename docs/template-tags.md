@@ -241,6 +241,14 @@ The later compliance clauses expose the same appeal-rights pattern as the earlie
 | `{energyEfficiencyCompliant}` / `{energyEfficiencyAppealRights}` | Compliance and appeal-rights for B5-7 |
 | `{energyEfficiencyNotes}` | Notes for B5-7 energy efficiency |
 
+## Cover image tag
+
+Use a dedicated paragraph for the report cover image so it can be placed on the cover sheet and scaled to the correct size for Word export.
+
+| Tag | Image |
+| --- | --- |
+| `{%coverImage}` | Front cover image uploaded in the report workflow |
+
 ## Image tags
 
 Each is a 900×600 composite rendered exactly as shown in the wizard (satellite base with the layer drawn on top). All must be in dedicated paragraphs.

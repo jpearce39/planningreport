@@ -370,6 +370,7 @@ function documentData(report) {
   const data = {
     title: report.address || 'Untitled planning report',
     date: new Date().toLocaleDateString('en-AU', { day: 'numeric', month: 'long', year: 'numeric' }),
+    coverImage: report.coverImage || '',
     gardenClause, gardenRequirement, gardenRequirementArea, gardenAchieved, canopyRequired, canopyRequiredArea, canopyAchieved,
     siteCoveragePercent,
     siteCoveragePercentage: siteCoveragePercent,
@@ -533,7 +534,18 @@ app.post('/api/report/document', async (request, response) => {
         await browser.close()
       }
     }
-    const imageModule = new ImageModule({ centered: false, fileType: 'docx', getImage: (tagValue) => Buffer.from(tagValue.split(',')[1], 'base64'), getSize: () => [480, 320] })
+    const imageModule = new ImageModule({
+      centered: false,
+      fileType: 'docx',
+      getImage: (tagValue) => {
+        const source = typeof tagValue === 'string' && tagValue.includes(',') ? tagValue.split(',')[1] : tagValue
+        return Buffer.from(source, 'base64')
+      },
+      getSize: (img, tagValue, tagName) => {
+        const name = String(tagName || '').toLowerCase()
+        return name.includes('cover') ? [540, 320] : [480, 320]
+      },
+    })
     const zip = new PizZip(fs.readFileSync(templateFile, 'binary'))
     const doc = new Docxtemplater(zip, { modules: [imageModule], linebreaks: true, paragraphLoop: true })
     doc.render(data)
