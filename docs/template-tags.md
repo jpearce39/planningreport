@@ -22,8 +22,8 @@ Rules:
 | `{lga}` | Local government area |
 | `{dwellings}` | Proposed dwellings |
 | `{storeys}` | Development storeys |
-| `{parking}` | Parking arrangement |
-| `{parkingOther}` | Parking description when arrangement is "Other" |
+| `{parking}` | Backward-compatible summary of parking arrangements by dwelling |
+| `{parkingOther}` | Backward-compatible parking description field; blank when using per-dwelling arrangements |
 | `{existing}` | Existing site condition |
 | `{siteArea}` | Site area (m²) |
 | `{frontage}` | Frontage (m) |
@@ -58,6 +58,18 @@ One entry per proposed dwelling, using a paragraph loop — the `{#openSpace}` a
 {label} — secluded: {secluded} m², total: {total} m²
 
 {/openSpace}
+```
+
+## Parking arrangements loop
+
+Each proposed dwelling has an independent parking arrangement. The `{#parkingArrangements}` and `{/parkingArrangements}` markers must each be in their own paragraph, and the paragraph between them repeats once per dwelling:
+
+```
+{#parkingArrangements}
+
+{number}: {arrangement}{other}
+
+{/parkingArrangements}
 ```
 
 Available inside the loop: `{label}` (`Dwelling 1`, `Dwelling 2`, …), `{secluded}`, `{total}`.

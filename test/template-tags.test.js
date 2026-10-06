@@ -33,6 +33,11 @@ const requiredDocTags = [
   '{gardenRequirementArea}',
   '{canopyRequiredArea}',
   '{treeCanopyCount}',
+  '{#parkingArrangements}',
+  '{number}',
+  '{arrangement}',
+  '{other}',
+  '{/parkingArrangements}',
 ]
 
 test('template reference documents the later clause tags', () => {
@@ -55,4 +60,7 @@ test('starter template uses dynamic compliance tags for later clauses', () => {
   assert.ok(template.includes('{gardenRequirementArea}'), 'Garden requirement area tag missing from starter template')
   assert.ok(template.includes('{canopyRequiredArea}'), 'Canopy required area tag missing from starter template')
   assert.ok(template.includes('{treeCanopyCount}'), 'Tree canopy count tag missing from starter template')
+  assert.ok(template.includes('{#parkingArrangements}'), 'Per-dwelling parking loop missing from starter template')
+  assert.ok(template.includes('{number}: {arrangement}{other}'), 'Per-dwelling parking fields missing from starter template')
+  assert.ok(template.includes('{/parkingArrangements}'), 'Per-dwelling parking loop closing tag missing from starter template')
 })

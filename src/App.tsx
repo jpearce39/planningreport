@@ -1,14 +1,15 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import { createContext, useContext, useEffect, useMemo, useState, type FormEvent } from 'react'
 import { buildPrintableReportHtml } from './report-print.js'
 import './App.css'
 
-type ClauseCheck = { compliant: boolean; notes: string }
-type StreetIntegrationCheck = { compliant: boolean; proposedServicesWidth: string; notes: string }
-type StormwaterCheck = { compliant: boolean; rainwaterTank: boolean; rainwaterTankSize: string; permeablePaving: boolean; rainGardens: boolean; reuseSanitary: boolean; reuseLaundry: boolean; reuseGarden: boolean; notes: string }
+type ClauseCheck = { compliant: boolean; appealRights?: boolean; notes: string }
+type StreetIntegrationCheck = { compliant: boolean; appealRights?: boolean; proposedServicesWidth: string; notes: string }
+type StormwaterCheck = { compliant: boolean; appealRights?: boolean; rainwaterTank: boolean; rainwaterTankSize: string; permeablePaving: boolean; rainGardens: boolean; reuseSanitary: boolean; reuseLaundry: boolean; reuseGarden: boolean; notes: string }
+type ParkingArrangement = { arrangement: string; other: string }
 type TreeCanopyClause = ClauseCheck & { count: string }
 type Report = {
   address: string; zone: string; zoneDescription: string; overlays: string; lga: string
-  dwellings: string; storeys: string; parking: string; parkingOther: string; existing: string
+  dwellings: string; storeys: string; parking: string; parkingOther: string; parkingArrangements?: ParkingArrangement[]; existing: string
   siteArea: string; frontage: string; frontageStreet: string; summary: string; coverImage: string
   siteCoverage: string; permeable: string; gardenArea: string; gardenRequirement: string; canopy: string; maxHeight: string
   ordinance: string; images: { satellite: string; satelliteBoundary: string; zoning: string; overlays: string[] }
@@ -54,17 +55,73 @@ type Project = { id: string; name: string; report: Report; updatedAt: number }
 
 const blankReport: Report = { address: '', zone: '', zoneDescription: '', overlays: '', lga: '', dwellings: '2', storeys: '2', parking: 'Onsite parking', parkingOther: '', existing: 'Single storey dwelling', siteArea: '', frontage: '', frontageStreet: '', summary: '', coverImage: '', siteCoverage: '', permeable: '', gardenArea: '', gardenRequirement: '', canopy: '', maxHeight: '', ordinance: '', images: { satellite: '', satelliteBoundary: '', zoning: '', overlays: [] }, openSpace: [], carParking: 'Each dwelling has provided the required carparking space under this clause.  No visitor parking is required to be provided on site, and consequently, none has.', existingTrees: [], existingTreesNone: false, streetSetback: { compliant: true, distance: '', notes: 'Front setback compliant with planning controls.' }, buildingHeightClause: { compliant: true, maxHeight: '', notes: 'Maximum height is below the requirement of the zoning.' }, sideRearSetbacks: { compliant: true, method: 'B2-3.1', boundaries: [], notes: '' }, wallsOnBoundary: { compliant: true, count: '', walls: [], notes: 'Total wall on boundary length is within the allowable distance.' }, siteCoverageClause: { compliant: true, notes: 'Site coverage within the allowable requirements.' }, accessClause: { compliant: true, proposedWidth: '', treeEncroachmentPct: '', notes: 'Crossover width within the allowable requirement achieved.' }, treeCanopyClause: { compliant: true, count: '', notes: 'Tree canopy requirements achieved. Relevant diagramming on TP5.' }, frontFenceClause: { compliant: true, notes: 'The maximum height of the front fence is: 0.9m.' }, dwellingDiversityClause: { compliant: true, notes: 'Not applicable as less than 10 dwellings.' }, parkingLocationClause: { compliant: true, notes: 'All windows within accessways achieve 1m where sills are 1.5m.' }, streetIntegration: { compliant: true, proposedServicesWidth: '', notes: 'All dwellings provided with habitable rooms at either ground or first floor.' }, entryClause: { compliant: true, notes: 'All entry porches covered by 1.2 x 1.2 (1.44m2) canopy.' }, privateOpenSpaceClause: { compliant: true, notes: 'All dwellings supplied with minimum 25m2 S.P.O.S.' }, solarAccessOpenSpaceClause: { compliant: true, notes: 'All dwellings achieve required setbacks to achieve solar requirements to S.P.O.S.' }, functionalLayoutClause: { compliant: true, notes: 'All minimum room dimensions and areas achieved.' }, roomDepthClause: { compliant: true, notes: 'All dwellings provide dual aspect to all Living / kitchen / dining areas.' }, daylightNewWindowsClause: { compliant: true, notes: 'All new habitable room windows are provided with 3m2 clear to sky.' }, naturalVentilationClause: { compliant: true, notes: 'Relevant diagramming on TP5.' }, storageClause: { compliant: true, notes: '6m³ storage provided to all dwellings.' }, accessibilityClause: { compliant: true, notes: 'Not applicable to this application.' }, daylightExistingWindowsClause: { compliant: true, notes: 'All existing habitable room windows have been provided with 3m2 clear to sky as required.' }, northFacingWindowsClause: { compliant: true, notes: 'All north facing windows are setback appropriately from the proposal via compliant dimensions.' }, overshadowingSosClause: { compliant: true, notes: 'All shadowing calculated on TP6 - TP9. This is assessed as compliant.' }, overlookingClause: { compliant: true, notes: 'Overlooking arc annotated on plans. All relevant floor levels have been dimensioned. Screening has been annotated where required.' }, internalViewsClause: { compliant: true, notes: 'Proposal does not propose overlooking internally.' }, stormwaterManagement: { compliant: true, rainwaterTank: false, rainwaterTankSize: '', permeablePaving: false, rainGardens: false, reuseSanitary: false, reuseLaundry: false, reuseGarden: false, notes: '' }, overshadowingSolarClause: { compliant: true, notes: 'Neighbouring solar facilities are sited appropriate distance from boundary. No shadowing occurs over facilities.' }, rooftopSolarClause: { compliant: true, notes: 'Refer to dedicated area on page no. TP4 for further details.' }, solarProtectionClause: { compliant: true, notes: 'Fixed shading devices have been annotated, dimensioned and tagged on plans and shown on elevations.' }, wasteRecyclingClause: { compliant: true, notes: 'Refer to dedicated area on page no. TP5 for further details.' }, noiseImpactsClause: { compliant: true, notes: 'All mechanical plant equipment and storage have been located away from habitable windows. All have been screened in their respective yards away from public using fencing.' }, energyEfficiencyClause: { compliant: true, notes: 'Not applicable to this application.' } }
 const steps = ['Project address', 'Zone & overlays', 'Development', 'Existing site', 'Site area', 'Frontage', 'Frontage street', 'Aerial context', 'Zoning map', 'Overlay maps', 'Site coverage', 'Permeable area', 'Garden area', 'Canopy area', 'Development summary', 'Private open space', 'Zone standards', 'Building height', 'Garden requirement', 'Car parking 52.06', 'Canopy trees 52.37', 'B2-1 Street setback', 'B2-2 Building height', 'B2-3 Side & rear setbacks', 'B2-4 Walls on boundaries', 'B2-5 Site coverage', 'B2-6 Access', 'B2-7 Tree canopy', 'B2-8 Front fence', 'B2-9 Dwelling diversity', 'B3-2 Parking location', 'B3-3 Street integration', 'B3-4 Entry', 'B3-5 Private open space', 'B3-6 Solar access to open space', 'B3-7 Functional layout', 'B3-8 Room depth', 'B3-9 Daylight to new windows', 'B3-10 Natural ventilation', 'B3-11 Storage', 'B3-12 Accessibility', 'B4-1 Daylight to existing windows', 'B4-2 Existing north-facing windows', 'B4-3 Overshadowing secluded open space', 'B4-4 Overlooking', 'B4-5 Internal views', 'B5-1 Permeability & stormwater management', 'B5-2 Overshadowing domestic solar', 'B5-3 Rooftop solar energy generation', 'B5-4 Solar protection to new north-facing windows', 'B5-5 Waste & recycling', 'B5-6 Noise impacts', 'B5-7 Energy efficiency', 'Cover image']
+const appealRightsFieldByStep: Record<string, keyof Report> = {
+  'B2-9 Dwelling diversity': 'dwellingDiversityClause',
+  'B3-2 Parking location': 'parkingLocationClause',
+  'B3-3 Street integration': 'streetIntegration',
+  'B3-4 Entry': 'entryClause',
+  'B3-5 Private open space': 'privateOpenSpaceClause',
+  'B3-6 Solar access to open space': 'solarAccessOpenSpaceClause',
+  'B3-7 Functional layout': 'functionalLayoutClause',
+  'B3-8 Room depth': 'roomDepthClause',
+  'B3-9 Daylight to new windows': 'daylightNewWindowsClause',
+  'B3-10 Natural ventilation': 'naturalVentilationClause',
+  'B3-11 Storage': 'storageClause',
+  'B3-12 Accessibility': 'accessibilityClause',
+  'B4-5 Internal views': 'internalViewsClause',
+  'B5-1 Permeability & stormwater management': 'stormwaterManagement',
+  'B5-3 Rooftop solar energy generation': 'rooftopSolarClause',
+  'B5-4 Solar protection to new north-facing windows': 'solarProtectionClause',
+  'B5-5 Waste & recycling': 'wasteRecyclingClause',
+  'B5-6 Noise impacts': 'noiseImpactsClause',
+  'B5-7 Energy efficiency': 'energyEfficiencyClause',
+}
+const linkedAppealRightsFieldByStep: Record<string, keyof Report> = {
+  'B2-1 Street setback': 'streetSetback',
+  'B2-2 Building height': 'buildingHeightClause',
+  'B2-3 Side & rear setbacks': 'sideRearSetbacks',
+  'B2-4 Walls on boundaries': 'wallsOnBoundary',
+  'B2-5 Site coverage': 'siteCoverageClause',
+  'B2-6 Access': 'accessClause',
+  'B2-7 Tree canopy': 'treeCanopyClause',
+  'B2-8 Front fence': 'frontFenceClause',
+  'B4-1 Daylight to existing windows': 'daylightExistingWindowsClause',
+  'B4-2 Existing north-facing windows': 'northFacingWindowsClause',
+  'B4-3 Overshadowing secluded open space': 'overshadowingSosClause',
+  'B4-4 Overlooking': 'overlookingClause',
+  'B5-2 Overshadowing domestic solar': 'overshadowingSolarClause',
+}
+const AppealRightsContext = createContext<{ enabled: boolean; checked: boolean; setChecked: (value: boolean) => void }>({ enabled: false, checked: false, setChecked: () => undefined })
 const sample = { zone: 'GRZ1', zoneDescription: 'General Residential Zone - Schedule 1', overlays: 'DDO18 — Design and Development Overlay', lga: 'MELBOURNE' }
 const API_BASE_URL = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '')
 const apiUrl = (path: string) => `${API_BASE_URL}${path}`
 const api = async (path: string, options: RequestInit = {}) => { const response = await fetch(apiUrl(path), { credentials: 'include', headers: { 'Content-Type': 'application/json', ...(options.headers || {}) }, ...options }); const payload = response.status === 204 ? null : await response.json(); if (!response.ok) throw new Error(payload?.error || 'Request failed'); return payload }
+function withAppealRights(report: Report): Report {
+  const normalized = { ...report }
+  for (const field of Object.values(appealRightsFieldByStep)) {
+    const clause = normalized[field] as ClauseCheck
+    if (clause && typeof clause.appealRights !== 'boolean') {
+      Object.assign(normalized, { [field]: { ...clause, appealRights: !clause.compliant } })
+    }
+  }
+  return normalized
+}
+function parkingArrangementsFor(report: Pick<Report, 'dwellings' | 'parking' | 'parkingOther' | 'parkingArrangements'>): ParkingArrangement[] {
+  const dwellingCount = Math.max(1, Number(report.dwellings) || 1)
+  const existing = Array.isArray(report.parkingArrangements) ? report.parkingArrangements : []
+  const useLegacyValue = existing.length === 0
+  return Array.from({ length: Math.max(dwellingCount, existing.length) }, (_, index) => existing[index] || {
+    arrangement: useLegacyValue ? report.parking || 'Onsite parking' : 'Onsite parking',
+    other: useLegacyValue ? report.parkingOther || '' : '',
+  })
+}
 
 function App() {
   const [view, setView] = useState<'home' | 'wizard' | 'report'>('home')
   const [step, setStep] = useState(() => Math.min(Math.max(Number(localStorage.getItem('planning-report-step') || 0), 0), steps.length - 1))
   const [report, setReport] = useState<Report>(() => {
     const stored = JSON.parse(localStorage.getItem('planning-report') || 'null')
-    const merged: Report = { ...blankReport, ...(stored || {}), images: { ...blankReport.images, ...(stored?.images || {}) } }
+    const merged = withAppealRights({ ...blankReport, ...(stored || {}), images: { ...blankReport.images, ...(stored?.images || {}) } })
     if (!Array.isArray(merged.existingTrees)) merged.existingTrees = []
     if (typeof merged.carParking !== 'string') merged.carParking = blankReport.carParking
     merged.existingTreesNone = Boolean(merged.existingTreesNone)
@@ -84,10 +141,10 @@ function App() {
   useEffect(() => { if (user) api('/api/projects').then((result) => setProjects(result.projects)).catch(() => undefined) }, [user, view])
   const save = async () => { localStorage.setItem('planning-report', JSON.stringify(report)); localStorage.setItem('planning-report-step', String(step)); try { const result = projectId ? await api(`/api/projects/${projectId}`, { method: 'PUT', body: JSON.stringify({ name: report.address, report }) }) : await api('/api/projects', { method: 'POST', body: JSON.stringify({ name: report.address, report }) }); setProjectId(result.project.id) } catch { /* Local drafts remain available when signed out or the API is offline. */ } setSaved(true); setTimeout(() => setSaved(false), 1800) }
   const goToStep = (nextStep: number) => { const safeStep = Math.min(Math.max(nextStep, 0), steps.length - 1); setStep(safeStep); localStorage.setItem('planning-report-step', String(safeStep)) }
-  const start = () => { setView('wizard'); setReport((current) => current.address ? current : { ...blankReport }); goToStep(report.address ? step : 0) }
-  const openProject = (project: Project) => { setReport({ ...blankReport, ...project.report }); setProjectId(project.id); setView('wizard'); goToStep(0) }
+  const start = () => { setView('wizard'); setReport((current) => current.address ? current : withAppealRights({ ...blankReport })); goToStep(report.address ? step : 0) }
+  const openProject = (project: Project) => { setReport(withAppealRights({ ...blankReport, ...project.report })); setProjectId(project.id); setView('wizard'); goToStep(0) }
   const deleteProject = async (id: string) => { try { await api(`/api/projects/${id}`, { method: 'DELETE' }) } catch { /* Remove from the list even if the server copy is already gone. */ } setProjects((current) => current.filter((project) => project.id !== id)); if (projectId === id) setProjectId(null) }
-  const deleteDraft = () => { localStorage.removeItem('planning-report'); localStorage.removeItem('planning-report-step'); setReport({ ...blankReport }); setProjectId(null); goToStep(0) }
+  const deleteDraft = () => { localStorage.removeItem('planning-report'); localStorage.removeItem('planning-report-step'); setReport(withAppealRights({ ...blankReport })); setProjectId(null); goToStep(0) }
   const dwellings = Math.max(1, Number(report.dwellings) || 1)
   const calculatedGardenRequirement = report.siteArea && Number(report.siteArea) > 650 ? 35 : report.siteArea && Number(report.siteArea) > 500 ? 30 : report.siteArea && Number(report.siteArea) >= 400 ? 25 : 0
   const gardenRequirement = report.gardenRequirement !== undefined && report.gardenRequirement !== '' ? Number(report.gardenRequirement) : calculatedGardenRequirement
@@ -161,6 +218,19 @@ function ProjectCard({ name, detail, onOpen, onDelete }: { name: string; detail:
 function Wizard({ step, setStep, report, update, save, saved, lookupState, setLookupState, onComplete, onCancel, standard, dwellings, gardenRequirement, gardenAchieved, gardenClause }: any) {
   const isLast = step === steps.length - 1
   const [standardsState, setStandardsState] = useState('Ready to scrape')
+  useEffect(() => {
+    const continueOnEnter = (event: KeyboardEvent) => {
+      if (event.key !== 'Enter' || event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return
+      const target = event.target
+      if (!(target instanceof HTMLInputElement) || !target.closest('.form-content')) return
+      if (['button', 'submit', 'reset', 'checkbox', 'radio', 'file', 'image', 'color', 'range'].includes(target.type)) return
+      event.preventDefault()
+      if (step === steps.length - 1) onComplete()
+      else setStep(step + 1)
+    }
+    document.addEventListener('keydown', continueOnEnter)
+    return () => document.removeEventListener('keydown', continueOnEnter)
+  }, [step, setStep, onComplete])
   const lookup = async () => { setLookupState('Querying Vicmap…'); try { const result = await api(`/api/vicmap/lookup?address=${encodeURIComponent(report.address)}`); const parcel = result.parcel; if (parcel.zone) update('zone', parcel.zone); if (parcel.zoneDescription) update('zoneDescription', parcel.zoneDescription); if (parcel.overlays) update('overlays', parcel.overlays); if (parcel.lga) update('lga', parcel.lga); if (parcel.siteArea) update('siteArea', String(Math.round(Number(parcel.siteArea)))); if (result.maps) update('images', { satellite: result.maps.satellite || '', satelliteBoundary: result.maps.satelliteBoundary || '', zoning: result.maps.zoning || '', overlays: result.maps.overlays || [] }); if (!report.frontageStreet) update('frontageStreet', formatStreetName(report.address)); setLookupState(parcel.zone ? 'Vicmap match found' : result.planningControlsAvailable ? 'Overlays found — zone unavailable, enter manually' : 'Parcel found — enter zone manually') } catch { setReportDefaults(report, update); setLookupState('Vicmap unavailable — edit manually') } }
   const scrapeStandards = async () => { setStandardsState('Scraping planning scheme…'); try { const result = await api(`/api/planning/standards?lga=${encodeURIComponent(report.lga)}&zone=${encodeURIComponent(report.zone)}&dwellings=${dwellings}`); if (result.text) update('ordinance', result.text); setStandardsState(result.message) } catch (error) { setStandardsState(error instanceof Error ? error.message : 'Scrape failed — enter manually') } }
   return <main className="wizard"><aside className="stepper"><div className="eyebrow">NEW PROJECT</div><h2>Report builder</h2><div className="step-list">{steps.map((name, index) => <button key={name} className={index === step ? 'active' : index < step ? 'complete' : ''} onClick={() => index <= step && setStep(index)}><span>{index < step ? '✓' : String(index + 1).padStart(2, '0')}</span>{name}</button>)}</div><div className="step-footer"><span className="dot green"></span>All changes saved locally</div></aside><section className="form-pane"><div className="form-top"><button className="back-link" onClick={onCancel}>← Projects</button><span>Step {String(step + 1).padStart(2, '0')} of {steps.length}</span></div><div className="form-content"><div className="eyebrow">{String(step + 1).padStart(2, '0')} / {steps.length}</div><h1>{steps[step]}</h1><p className="step-intro">{step === 0 ? 'Start with the site address. We will use it to find the parcel and planning controls.' : 'Capture the site detail that will anchor this report.'}</p><StepContent step={step} report={report} update={update} lookup={lookup} lookupState={lookupState} standard={standard} dwellings={dwellings} gardenRequirement={gardenRequirement} gardenAchieved={gardenAchieved} gardenClause={gardenClause} standardsState={standardsState} scrapeStandards={scrapeStandards} /><div className="form-nav"><button className="secondary" onClick={async () => { await save(); onCancel() }}>Save & exit</button><span>{saved ? 'Saved' : 'You can return to this draft anytime'}</span><button className="primary" onClick={() => isLast ? onComplete() : setStep(step + 1)}>{isLast ? 'Complete report' : 'Continue'} <span>→</span></button></div></div></section></main>
@@ -190,7 +260,8 @@ function TreeFields({ value, onChange }: { value: { number: string; species: str
 function requiredSetbackB231(height: string) { const h = Number(height) || 0; if (h <= 3.6) return 1; if (h <= 6.9) return +(1 + 0.3 * (h - 3.6)).toFixed(2); return +(h - 4.91).toFixed(2) }
 function requiredSetbackB232(height: string, isSouthFacing: boolean) { const h = Number(height) || 0; if (!isSouthFacing) return h > 11 ? 4.5 : 3; return h > 11 ? 9 : 6 }
 function CompliancePanel({ compliant, onChange, body }: { compliant: boolean; onChange: (value: boolean) => void; body: React.ReactNode }) {
-  return <div className="compliance-card"><label className="compliance"><input type="checkbox" checked={Boolean(compliant)} onChange={(event) => onChange(event.target.checked)} /><span className="compliance-label">Compliant with the requirements of this clause</span><span className={'appeal-rights ' + (compliant ? 'appeal-no' : 'appeal-yes')}>APPEAL RIGHTS: {compliant ? 'NO' : 'YES'}</span></label><div className="compliance-body">{body}</div></div>
+  const appealRights = useContext(AppealRightsContext)
+  return <div className="compliance-card"><div className="compliance"><label className="toggle compliance-check"><input type="checkbox" checked={Boolean(compliant)} onChange={(event) => onChange(event.target.checked)} /><span className="compliance-label">Compliant with the requirements of this clause</span></label>{appealRights.enabled && <label className="toggle appeal-control"><input type="checkbox" checked={appealRights.checked} onChange={(event) => appealRights.setChecked(event.target.checked)} /><span>Appeal rights apply</span></label>}<span className={'appeal-rights ' + (appealRights.checked ? 'appeal-yes' : 'appeal-no')}>APPEAL RIGHTS: {appealRights.checked ? 'YES' : 'NO'}</span></div><div className="compliance-body">{body}</div></div>
 }
 function NotesField({ value, defaultText, onChange, label = 'Further information' }: { value: string; defaultText: string; onChange: (value: string) => void; label?: string }) {
   const effective = value && value.trim() ? value : defaultText
@@ -218,10 +289,22 @@ function WallFields({ value, onChange }: { value: { elevation: string; boundaryL
   const addWall = () => onChange([...value, { elevation: '', boundaryLength: '', achieved: '', averageHeight: '', maxHeight: '' }])
   return <div className="overlay-fields"><div className="overlay-heading"><span className="group-label">Walls on boundary</span><span className="overlay-count">{value.length} added</span></div>{value.map((wall, index) => <div className="wall-card" key={index}><div className="tree-card-head"><span className="data-label">WALL {index + 1}</span>{value.length > 1 && <button type="button" className="remove-overlay" aria-label={`Remove wall ${index + 1}`} onClick={() => removeWall(index)}>×</button>}</div><div className="wall-fields"><Field label="Elevation" value={wall.elevation} onChange={(nextValue: string) => updateWall(index, { elevation: nextValue })} placeholder="e.g. NORTH ELEVATION" /><div className="wall-row"><Field label="Boundary length" value={wall.boundaryLength} onChange={(nextValue: string) => updateWall(index, { boundaryLength: nextValue })} type="number" placeholder="e.g. 69.90" hint="Metres" /><div className="metric"><span>Allowable wall on boundary</span><strong>{wall.boundaryLength ? `${allowableWallOnBoundary(wall.boundaryLength)} m` : '—'}</strong></div><Field label="Achieved wall on boundary" value={wall.achieved} onChange={(nextValue: string) => updateWall(index, { achieved: nextValue })} type="number" placeholder="e.g. 8.40" hint="Metres" /></div><div className="wall-row"><Field label="Average height" value={wall.averageHeight} onChange={(nextValue: string) => updateWall(index, { averageHeight: nextValue })} type="number" placeholder="e.g. 7.20" hint="Metres" /><Field label="Maximum height" value={wall.maxHeight} onChange={(nextValue: string) => updateWall(index, { maxHeight: nextValue })} type="number" placeholder="e.g. 8.40" hint="Metres" /><div /></div></div></div>)}<button type="button" className="add-overlay" onClick={addWall}>＋ Add wall</button></div>
 }
-function StepContent({ step, report, update, lookup, lookupState, standard, dwellings, gardenRequirement, gardenAchieved, gardenClause, standardsState, scrapeStandards }: any) {
+function StepContent(props: any) {
+  const { step, report, update } = props
+  const field = appealRightsFieldByStep[steps[step]] || linkedAppealRightsFieldByStep[steps[step]]
+  const enabled = Boolean(appealRightsFieldByStep[steps[step]])
+  const clause = field ? report[field] as ClauseCheck : undefined
+  const checked = enabled && typeof clause?.appealRights === 'boolean' ? clause.appealRights : !clause?.compliant
+  const setChecked = (value: boolean) => {
+    if (enabled && field && clause) update(field, { ...clause, appealRights: value })
+  }
+  return <AppealRightsContext.Provider value={{ enabled, checked, setChecked }}><StepContentBody {...props} /></AppealRightsContext.Provider>
+}
+
+function StepContentBody({ step, report, update, lookup, lookupState, standard, dwellings, gardenRequirement, gardenAchieved, gardenClause, standardsState, scrapeStandards }: any) {
   if (step === 0) return <div className="stack"><Field label="Project address" value={report.address} onChange={(v: string) => update('address', v)} placeholder="12 Example Street, Carlton VIC 3053" hint="Use the street address for the parcel you are assessing." /><button className="lookup" onClick={lookup}>⌕ {lookupState}</button></div>
   if (step === 1) return <div className="stack"><div className="data-card"><span className="data-label">VICMAP RESULT / {report.lga || 'AWAITING LOOKUP'}</span><Field label="Zone code" value={report.zone} onChange={(v: string) => update('zone', v)} placeholder="GRZ1" /><Field label="Zone description" value={report.zoneDescription} onChange={(v: string) => update('zoneDescription', v)} placeholder="General Residential Zone" /><OverlayFields value={report.overlays} onChange={(v: string) => update('overlays', v)} /></div><p className="question">Does this look right? Edit any field if the Vicmap result needs correcting.</p></div>
-  if (step === 2) return <div className="stack"><Field label="Proposed dwellings" value={report.dwellings} onChange={(v: string) => update('dwellings', v)} type="number" placeholder="2" /><Field label="Development storeys" value={report.storeys} onChange={(v: string) => update('storeys', v)} type="number" placeholder="2" /><span className="group-label">Parking arrangement</span><Options value={report.parking} onChange={(v: string) => update('parking', v)} options={['Onsite parking', 'No onsite parking', 'Other']} />{report.parking === 'Other' && <Field label="Describe parking arrangement" value={report.parkingOther} onChange={(v: string) => update('parkingOther', v)} placeholder="e.g. Car stacker system" />}</div>
+  if (step === 2) { const arrangements = parkingArrangementsFor(report); const updateArrangement = (index: number, patch: Partial<ParkingArrangement>) => { const next = [...arrangements]; next[index] = { ...next[index], ...patch }; update('parkingArrangements', next) }; return <div className="stack"><Field label="Proposed dwellings" value={report.dwellings} onChange={(v: string) => update('dwellings', v)} type="number" placeholder="2" /><Field label="Development storeys" value={report.storeys} onChange={(v: string) => update('storeys', v)} type="number" placeholder="2" /><span className="group-label">Parking arrangement by dwelling</span>{Array.from({ length: dwellings }, (_, index) => { const parking = arrangements[index]; return <div className="data-card space-card" key={index}><span className="data-label">DWELLING {index + 1} / PARKING</span><Options value={parking.arrangement} onChange={(value: string) => updateArrangement(index, { arrangement: value })} options={['Onsite parking', 'No onsite parking', 'Other']} />{parking.arrangement === 'Other' && <Field label={`Describe parking arrangement for dwelling ${index + 1}`} value={parking.other} onChange={(value: string) => updateArrangement(index, { other: value })} placeholder="e.g. Car stacker system" />}</div>})}</div> }
   if (step === 3) return <Options value={report.existing} onChange={(v: string) => update('existing', v)} options={['Single storey dwelling', 'Double storey dwelling', 'Vacant']} />
   if (step === 4) return <div className="stack"><Field label="Site area" value={report.siteArea} onChange={(v: string) => update('siteArea', v)} type="number" placeholder="612" hint="Square metres (m²)" /><SiteAreaMap report={report} /><p className="question">The red boundary shows the parcel used for the site area calculation. You can replace the area above if required.</p></div>
   if (step === 5) return <Field label="Site frontage" value={report.frontage} onChange={(v: string) => update('frontage', v)} type="number" placeholder="15.2" hint="Metres" />
