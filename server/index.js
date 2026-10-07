@@ -95,7 +95,14 @@ async function scrapePlanningStandards(lga, zone, dwellings) {
       })
       return tableRows.map((cells) => ({ cells, standardIndex: cells.findIndex((cell) => new RegExp(`(?:^|\\s|and )${rowPrefix}\\d+(?:-\\d+)?\\b`, 'i').test(cell)) })).filter(({ standardIndex }) => standardIndex >= 0).map(({ cells, standardIndex }) => { const standard = cells[standardIndex].match(new RegExp(`${rowPrefix}\\d+(?:-\\d+)?`, 'i'))?.[0] || cells[standardIndex]; return { standard, values: cells, text: cells.map((cell, index) => index === standardIndex ? standard : cell).join(' | ') } })
     }, prefix)
-    return { supported: true, url, zone: mapping.zone, clause: mapping.clause, schedule: mapping.schedule, filter: prefix, rows, text: rows.map((row) => row.text).join('\n'), message: rows.length ? 'Planning standards scraped successfully' : 'The table loaded but no matching standards were found' }
+    const maxHeight = await page.$$eval('.ordinance-section__content', (sections) => {
+      const section = sections.find((candidate) => [...candidate.querySelectorAll('h2, h3')].some((heading) => /maximum building height/i.test(heading.innerText)))
+      if (!section) return ''
+      const heading = [...section.querySelectorAll('h2, h3')].find((candidate) => /maximum building height/i.test(candidate.innerText))
+      const value = heading?.closest('.heading-wrapper')?.nextElementSibling?.innerText
+      return value?.replace(/\s+/g, ' ').trim() || ''
+    })
+    return { supported: true, url, zone: mapping.zone, clause: mapping.clause, schedule: mapping.schedule, filter: prefix, rows, text: rows.map((row) => row.text).join('\n'), maxHeight: maxHeight || 'None specified.', message: rows.length ? 'Planning standards scraped successfully' : 'The table loaded but no matching standards were found' }
   } finally {
     await browser.close()
   }

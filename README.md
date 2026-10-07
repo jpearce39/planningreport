@@ -47,17 +47,16 @@ The home screen lists your saved projects from the API when signed in, or the lo
 | 11-14 | `siteCoverage`, `permeable`, `gardenArea`, `canopy` in square metres |
 | 15 | `summary`, up to 500 words |
 | 16 | `openSpace[]`, with secluded and total private open space per dwelling |
-| 17 | `ordinance`, scraped on demand via `/api/planning/standards` and filtered to A values for one dwelling or B values for multiple dwellings |
-| 18 | `maxHeight`, including `None specified` where applicable |
-| 19 | Garden requirement and achieved percentage confirmation; the requirement percentage is editable |
-| 20 | `carParking`, defaults filled in |
-| 21 | `existingTrees[]` (freeform identifier like `T1`, plus species, spread × height, status, location, retain/remove) and Clause 52.37 canopy requirement (`canopyRequired`, `canopyAchieved`) computed from site area. Tick "no existing canopy trees" to skip the tree list |
-| 22 | `streetSetback` (Clause 55 B2-1) — compliance flag with APPEAL RIGHTS (**Yes** when left unticked, **No** when ticked), distance setback (m), and notes (defaults filled in: "Front setback compliant with planning controls.") |
-| 23 | `buildingHeightClause` (Clause 55 B2-2) — compliance flag with APPEAL RIGHTS, max height (m), notes (defaults filled in: "Maximum height is below the requirement of the zoning.") |
-| 24 | `sideRearSetbacks` (Clause 55 B2-3) — compliance flag with APPEAL RIGHTS, method picker (`B2-3.1` or `B2-3.2`), plus a list of boundaries each with floors. Required setback per floor is calculated from height: under B2-3.1 `max(1, 1 + 0.3×(h−3.6), 1 + 0.99 + (h−6.9))`; under B2-3.2 it's 3/4.5 m (or 6/9 m when south-facing between S 30° W and S 30° E). A `Yes`/No` south-facing toggle appears only for the B2-3.2 method. |
-| 25 | `wallsOnBoundary` (B2-4) — compliance flag with APPEAL RIGHTS, count, and a list of walls each with elevation, boundary length, achieved length, average height, and maximum height. Allowable wall on boundary = `10 + 0.25 × boundary length` (calculated live) |
-| 26 | `siteCoverageClause` (B2-5) — compliance flag with APPEAL RIGHTS. Computes site coverage % from `siteCoverage / siteArea` and shows the maximum allowable by zone (NRZ 60%, GRZ 65%, RGZ/MUZ/HCTZ 70%) |
-| 27 | `accessClause` (B2-6) — compliance flag with APPEAL RIGHTS, proposed crossover width, and tree encroachment percentage. Allowable crossover is 33% of street frontage (or 40% if frontage < 20 m), shown live |
+| 17 | `ordinance`, scraped on demand via `/api/planning/standards` and filtered to A values for one dwelling or B values for multiple dwellings, plus `maxHeight` scraped from the same zone schedule (defaults to `None specified.`) |
+| 18 | Garden requirement and achieved percentage confirmation; the requirement percentage is editable |
+| 19 | `carParking`, defaults filled in |
+| 20 | `existingTrees[]` (freeform identifier like `T1`, plus species, spread × height, status, location, retain/remove) and Clause 52.37 canopy requirement (`canopyRequired`, `canopyAchieved`) computed from site area. Tick "no existing canopy trees" to skip the tree list |
+| 21 | `streetSetback` (Clause 55 B2-1) — compliance flag with APPEAL RIGHTS (**Yes** when left unticked, **No** when ticked), distance setback (m), and notes (defaults filled in: "Front setback compliant with planning controls.") |
+| 22 | `buildingHeightClause` (Clause 55 B2-2) — compliance flag with APPEAL RIGHTS, max height (m), notes (defaults filled in: "Maximum height is below the requirement of the zoning.") |
+| 23 | `sideRearSetbacks` (Clause 55 B2-3) — compliance flag with APPEAL RIGHTS, method picker (`B2-3.1` or `B2-3.2`), plus a list of boundaries each with floors. Required setback per floor is calculated from height: under B2-3.1 `max(1, 1 + 0.3×(h−3.6), 1 + 0.99 + (h−6.9))`; under B2-3.2 it's 3/4.5 m (or 6/9 m when south-facing between S 30° W and S 30° E). A `Yes`/No` south-facing toggle appears only for the B2-3.2 method. |
+| 24 | `wallsOnBoundary` (B2-4) — compliance flag with APPEAL RIGHTS, count, and a list of walls each with elevation, boundary length, achieved length, average height, and maximum height. Allowable wall on boundary = `10 + 0.25 × boundary length` (calculated live) |
+| 25 | `siteCoverageClause` (B2-5) — compliance flag with APPEAL RIGHTS. Computes site coverage % from `siteCoverage / siteArea` and shows the maximum allowable by zone (NRZ 60%, GRZ 65%, RGZ/MUZ/HCTZ 70%) |
+| 26 | `accessClause` (B2-6) — compliance flag with APPEAL RIGHTS, proposed crossover width, and tree encroachment percentage. Allowable crossover is 33% of street frontage (or 40% if frontage < 20 m), shown live |
 
 ## Calculation rules
 
@@ -95,7 +94,7 @@ Available routes:
 - `GET /api/planning/standards?lga=...&zone=...&dwellings=...`
 - `POST /api/report/document`
 
-The standards endpoint uses Puppeteer to render `planning-schemes.app.planning.vic.gov.au/{LGA}/ordinance/{ZONE_CLAUSE}`, scrape `table.ordinance-section__table.clause-1`, and filter the `Standard` column by `A` for one proposed dwelling or `B` for multiple dwellings. Supported zone mappings are `GRZ -> 32.08`, `NRZ -> 32.09`, and `RGZ -> 32.07`; the schedule number is taken from the numeric suffix, for example `GRZ1 -> 32.08-s1`. Unsupported prefixes return a manual-entry response.
+The standards endpoint uses Puppeteer to render `planning-schemes.app.planning.vic.gov.au/{LGA}/ordinance/{ZONE_CLAUSE}`, scrape `table.ordinance-section__table.clause-1`, and filter the `Standard` column by `A` for one proposed dwelling or `B` for multiple dwellings. It also reads the schedule's “Maximum building height” section from the same page. Supported zone mappings are `GRZ -> 32.08`, `NRZ -> 32.09`, and `RGZ -> 32.07`; the schedule number is taken from the numeric suffix, for example `GRZ1 -> 32.08-s1`. Unsupported prefixes return a manual-entry response.
 
 On Linux (for example Codespaces or serverless deployments) the scraper uses `@sparticuz/chromium`, which bundles a portable Chromium binary and avoids requiring system GTK libraries. On other platforms it uses the Chrome that Puppeteer downloads at install time. Set `PUPPETEER_EXECUTABLE_PATH` only when deploying with an existing Chrome/Chromium installation. Rows that continue a multi-row label (rowspan) inherit that label, so filtered standards keep their description.
 

@@ -76,7 +76,7 @@ Available inside the loop: `{label}` (`Dwelling 1`, `Dwelling 2`, …), `{seclud
 
 ## Existing canopy trees loop
 
-One entry per tree added in step 21. Same paragraph-loop pattern as above:
+One entry per tree added in step 20. Same paragraph-loop pattern as above:
 
 ```
 {#existingTrees}
@@ -90,7 +90,7 @@ Available inside the loop: `{number}`, `{species}`, `{spreadHeight}`, `{status}`
 
 ## No existing canopy trees
 
-Render a single confirmation paragraph when the user has ticked "There are no existing canopy trees on this site" in step 21. Conditional sections render only when the data value is truthy:
+Render a single confirmation paragraph when the user has ticked "There are no existing canopy trees on this site" in step 20. Conditional sections render only when the data value is truthy:
 
 ```
 {#noExistingTrees}
@@ -102,7 +102,7 @@ No existing canopy trees are present on the site, as confirmed by the arborist.
 
 ## Clause 55 compliance tags
 
-Each of steps 22 (B2-1), 23 (B2-2), and 24 (B2-3) records whether the proposal is compliant with the clause. The compliance flag becomes a "No" when the user ticks the box and a "Yes" when they don't; this maps directly to the presence of appeal rights:
+Each of steps 21 (B2-1), 22 (B2-2), and 23 (B2-3) records whether the proposal is compliant with the clause. The compliance flag becomes a "No" when the user ticks the box and a "Yes" when they don't; this maps directly to the presence of appeal rights:
 
 | Tag | Content |
 | --- | --- |
@@ -116,7 +116,7 @@ Each of steps 22 (B2-1), 23 (B2-2), and 24 (B2-3) records whether the proposal i
 
 ## Side & rear boundary loop
 
-One entry per boundary added in step 24, with the floors pre-formatted into a single block:
+One entry per boundary added in step 23, with the floors pre-formatted into a single block:
 
 ```
 {#sideRearBoundaries}
