@@ -60,6 +60,8 @@ One entry per proposed dwelling, using a paragraph loop — the `{#openSpace}` a
 {/openSpace}
 ```
 
+Available inside the loop: `{label}` (`Dwelling 1`, `Dwelling 2`, …), `{secluded}`, `{total}`.
+
 ## Parking arrangements loop
 
 Each proposed dwelling has an independent parking arrangement. The `{#parkingArrangements}` and `{/parkingArrangements}` markers must each be in their own paragraph, and the paragraph between them repeats once per dwelling:
@@ -71,8 +73,6 @@ Each proposed dwelling has an independent parking arrangement. The `{#parkingArr
 
 {/parkingArrangements}
 ```
-
-Available inside the loop: `{label}` (`Dwelling 1`, `Dwelling 2`, …), `{secluded}`, `{total}`.
 
 ## Existing canopy trees loop
 
