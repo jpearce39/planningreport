@@ -20,11 +20,10 @@ Deploy the frontend as a Cloudflare Pages project using the Vite settings:
 - Build command: `npm run build`
 - Build output directory: `dist`
 - Root directory: `/`
-- Production environment variable: `VITE_API_URL=https://planning-report-api.onrender.com`
 
-The API remains on Render; Pages serves only the generated static frontend. Create a Render PostgreSQL database in the same region as the API service, then set the service's `DATABASE_URL` to the database's internal connection URL. Also set `NODE_ENV=production` and `CORS_ORIGIN` to the exact Pages site origin, for example `https://your-project.pages.dev`. Add any custom frontend domain as another comma-separated origin. Render supplies `PORT` automatically; the API listens on that port (Render commonly assigns `10000`).
+The API remains on Render; Pages serves the static frontend and proxies `/api/*` to the API through `public/_redirects`. Leave `VITE_API_URL` unset in Pages so the browser uses this same-origin proxy; this lets session cookies work without relying on third-party cookies. Create a Render PostgreSQL database in the same region as the API service, then set the service's `DATABASE_URL` to the database's internal connection URL. Also set `NODE_ENV=production` and `CORS_ORIGIN` to the exact Pages site origin, for example `https://your-project.pages.dev`. Add any custom frontend domain as another comma-separated origin. Render supplies `PORT` automatically; the API listens on that port (Render commonly assigns `10000`).
 
-Authentication uses cross-origin cookies, so the API allows credentials only from the configured origins and sets `SameSite=None; Secure` in production. Some browsers restrict third-party cookies between unrelated domains; for reliable sign-in, use a custom frontend domain and a same-site API hostname (for example, `app.example.com` and `api.example.com`). Update `VITE_API_URL` and `CORS_ORIGIN` to those deployed origins when using custom domains.
+For deployments that do not use the Pages proxy, set `VITE_API_URL` to the API origin and configure `CORS_ORIGIN` to the frontend origin. Authentication uses cross-origin cookies in this mode, and some browsers restrict third-party cookies between unrelated domains; a same-site frontend/API hostname pair (for example, `app.example.com` and `api.example.com`) is more reliable.
 
 ## Workflow data reference
 

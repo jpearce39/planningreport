@@ -138,13 +138,14 @@ function App() {
   const [projectId, setProjectId] = useState<string | null>(null)
   const [lookupState, setLookupState] = useState('Ready to look up')
   const [saved, setSaved] = useState(false)
+  const [saveError, setSaveError] = useState('')
   const [exporting, setExporting] = useState(false)
   const [projects, setProjects] = useState<Project[]>([])
 
   const update = (key: keyof Report, value: any) => setReport((current) => ({ ...current, [key]: value }))
   useEffect(() => { api('/api/auth/me').then((result) => setUser(result.user)).catch(() => undefined) }, [])
   useEffect(() => { if (user) api('/api/projects').then((result) => setProjects(result.projects)).catch(() => undefined) }, [user, view])
-  const save = async () => { localStorage.setItem('planning-report', JSON.stringify(report)); localStorage.setItem('planning-report-step', String(step)); try { const result = projectId ? await api(`/api/projects/${projectId}`, { method: 'PUT', body: JSON.stringify({ name: report.address, report }) }) : await api('/api/projects', { method: 'POST', body: JSON.stringify({ name: report.address, report }) }); setProjectId(result.project.id) } catch { /* Local drafts remain available when signed out or the API is offline. */ } setSaved(true); setTimeout(() => setSaved(false), 1800) }
+  const save = async () => { localStorage.setItem('planning-report', JSON.stringify(report)); localStorage.setItem('planning-report-step', String(step)); setSaveError(''); if (user) { try { const result = projectId ? await api(`/api/projects/${projectId}`, { method: 'PUT', body: JSON.stringify({ name: report.address, report }) }) : await api('/api/projects', { method: 'POST', body: JSON.stringify({ name: report.address, report }) }); setProjectId(result.project.id) } catch (error) { setSaved(false); setSaveError(`Saved locally; account sync failed: ${error instanceof Error ? error.message : 'Request failed'}`); return } } setSaved(true); setTimeout(() => setSaved(false), 1800) }
   const goToStep = (nextStep: number) => { const safeStep = Math.min(Math.max(nextStep, 0), steps.length - 1); setStep(safeStep); localStorage.setItem('planning-report-step', String(safeStep)) }
   const start = () => { setView('wizard'); setReport((current) => current.address ? current : withAppealRights({ ...blankReport, maxHeight: 'None specified.' })); goToStep(report.address ? step : 0) }
   const openProject = (project: Project) => { setReport(withAppealRights({ ...blankReport, ...project.report, maxHeight: project.report.maxHeight || 'None specified.' })); setProjectId(project.id); setView('wizard'); goToStep(0) }
@@ -186,7 +187,7 @@ function App() {
       const images = { satellite: await toDataUrl(report.images.satellite), satelliteBoundary: report.images.satelliteBoundary, zoning: await toDataUrl(report.images.zoning), overlays: [] as string[] }
       for (const overlay of report.images.overlays) images.overlays.push(await toDataUrl(overlay))
       const response = await fetch(apiUrl('/api/report/document'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...report, coverImage: await toDataUrl(report.coverImage), images }) })
-      if (!response.ok) { const payload = await response.json().catch(() => null); throw new Error(payload?.error || 'Document export failed') }
+      if (!response.ok) { const payload = await response.json().catch(() => null); throw new Error([payload?.error, payload?.detail].filter(Boolean).join(': ') || 'Document export failed') }
       const url = URL.createObjectURL(await response.blob())
       const link = document.createElement('a')
       link.href = url
@@ -201,7 +202,7 @@ function App() {
   }
   if (view === 'report') return <ReportView report={report} title={title} standard={standard} gardenRequirement={gardenRequirement} gardenAchieved={gardenAchieved} gardenClause={gardenClause} exporting={exporting} onExportWord={exportWord} onPrintReport={printReport} onBack={() => setView('wizard')} />
   return <div className="app-shell">
-    <header className="topbar"><button className="brand" onClick={() => setView('home')}><span className="brand-mark">◒</span><span>PLAN / VIC</span></button><div className="top-actions"><span className="saved-note">{saved ? 'Draft saved' : 'Victoria planning workspace'}</span>{user ? <button className="avatar" title={`Sign out (${user.email})`} onClick={() => api('/api/auth/logout', { method: 'POST' }).then(() => { setUser(null); setProjects([]) })}>{user.name.slice(0, 2).toUpperCase()}</button> : <><button className="auth-link" onClick={() => { setAuthMode('login'); setAuthOpen(true) }}>Sign in</button><button className="auth-cta" onClick={() => { setAuthMode('register'); setAuthOpen(true) }}>Sign up</button></>}</div></header>
+    <header className="topbar"><button className="brand" onClick={() => setView('home')}><span className="brand-mark">◒</span><span>PLAN / VIC</span></button><div className="top-actions"><span className={`saved-note ${saveError ? 'save-error' : ''}`}>{saveError || (saved ? 'Draft saved' : 'Victoria planning workspace')}</span>{user ? <button className="avatar" title={`Sign out (${user.email})`} onClick={() => api('/api/auth/logout', { method: 'POST' }).then(() => { setUser(null); setProjects([]) })}>{user.name.slice(0, 2).toUpperCase()}</button> : <><button className="auth-link" onClick={() => { setAuthMode('login'); setAuthOpen(true) }}>Sign in</button><button className="auth-cta" onClick={() => { setAuthMode('register'); setAuthOpen(true) }}>Sign up</button></>}</div></header>
     {view === 'home' ? <Home onStart={start} onLogin={() => setAuthOpen(true)} user={user} report={report} projects={projects} onOpenProject={openProject} onDeleteProject={deleteProject} onDeleteDraft={deleteDraft} /> : <Wizard step={step} setStep={goToStep} report={report} update={update} save={save} saved={saved} lookupState={lookupState} setLookupState={setLookupState} onComplete={() => { save(); setView('report') }} onCancel={() => setView('home')} standard={standard} dwellings={dwellings} gardenRequirement={gardenRequirement} gardenAchieved={gardenAchieved} gardenClause={gardenClause} user={user} onLogin={() => setAuthOpen(true)} />}
     {authOpen && <AuthPanel mode={authMode} setMode={setAuthMode} onClose={() => setAuthOpen(false)} onSubmit={authenticate} />}
   </div>
