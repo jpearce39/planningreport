@@ -29,17 +29,23 @@ export function buildPrintableReportHtml(report, title, standard, gardenRequirem
 <html lang="en-AU">
   <head>
     <meta charset="utf-8" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
     <title>${safeTitle}</title>
     <style>
       :root {
-        --ink: #17202a;
-        --muted: #5c6b73;
-        --panel: #f5f7f4;
-        --divider: #d9e1df;
-        --accent: #1a5f5d;
+        --green: #637d59;
+        --ink: #231f20;
+        --muted: #aeb4b1;
+        --paper: #e7e8e9;
+        --line: rgba(231, 232, 233);
+        --panel: var(--paper);
+        --divider: var(--line);
+        --accent: var(--green);
       }
       * { box-sizing: border-box; }
-      html, body { margin: 0; padding: 0; background: #fff; color: var(--ink); font-family: Arial, Helvetica, sans-serif; }
+      html, body { margin: 0; padding: 0; background: var(--paper); color: var(--ink); font-family: "Montserrat", sans-serif; }
       body {
         display: flex;
         justify-content: center;
@@ -48,8 +54,8 @@ export function buildPrintableReportHtml(report, title, standard, gardenRequirem
       .report-sheet {
         width: min(100%, 980px);
         border: 1px solid var(--divider);
-        background: #ffffff;
-        box-shadow: 0 8px 30px rgba(23, 32, 42, 0.08);
+        background: var(--paper);
+        box-shadow: 0 8px 30px rgba(35, 31, 32, 0.08);
         padding: 48px 56px 30px;
       }
       .eyebrow {
@@ -115,7 +121,7 @@ export function buildPrintableReportHtml(report, title, standard, gardenRequirem
         padding: 14px 12px;
         border: 1px solid var(--divider);
         border-radius: 10px;
-        background: #fff;
+        background: var(--paper);
         min-height: 72px;
       }
       .metric span {
@@ -129,7 +135,7 @@ export function buildPrintableReportHtml(report, title, standard, gardenRequirem
       }
       .note {
         border-left: 4px solid var(--accent);
-        background: #eff4f3;
+        background: rgba(99, 125, 89, .12);
         padding: 18px 18px 16px;
         border-radius: 8px;
       }
