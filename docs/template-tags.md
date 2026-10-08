@@ -46,6 +46,7 @@ Rules:
 | `{canopyRequired}` | Required canopy area percentage under Clause 52.37 (%) |
 | `{canopyRequiredArea}` | Required canopy area in square metres (m²) |
 | `{canopyAchieved}` | Achieved canopy percentage against the 52.37 requirement (%) |
+| `{canopyTreesResponse}` | Editable response for the Clause 52.37 canopy trees step |
 | `{treeCanopyCount}` | Number of canopy trees proposed under B2-7 |
 
 ## Private open space loop

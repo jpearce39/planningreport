@@ -522,7 +522,10 @@ function documentData(report) {
     energyEfficiencyNotes: report.energyEfficiencyClause?.notes || 'Not applicable to this application.',
     openSpace: (report.openSpace || []).map((space, index) => ({ label: `Dwelling ${index + 1}`, secluded: space.secluded || '', total: space.total || '' })),
     existingTrees: (report.existingTrees || []).map((tree) => ({ number: tree.number || '', species: tree.species || '', spreadHeight: tree.spreadHeight || '', status: tree.status || '', location: tree.location || '', retain: tree.retain || '' })),
-    noExistingTrees: Boolean(report.existingTreesNone)
+    noExistingTrees: Boolean(report.existingTreesNone),
+    canopyTreesResponse: (typeof report.canopyTreesResponse === 'string' && report.canopyTreesResponse.trim()) || (report.existingTreesNone
+      ? 'No existing canopy trees are present on the site.'
+      : 'As per Arborist Report\n\nAll new canopy trees species and calculations as per provided landscape plan.')
   }
   for (const key of ['address', 'zone', 'zoneDescription', 'overlays', 'lga', 'dwellings', 'storeys', 'existing', 'siteArea', 'frontage', 'frontageStreet', 'siteCoverage', 'permeable', 'gardenArea', 'canopy', 'maxHeight', 'summary', 'ordinance', 'carParking']) data[key] = report[key] || ''
   return data

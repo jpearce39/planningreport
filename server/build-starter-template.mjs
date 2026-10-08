@@ -54,6 +54,7 @@ const body = [
   paragraph('{#existingTrees}'),
   paragraph('Tree {number} ({species}) — {spreadHeight}, status: {status}, located {location} — {retain}.'),
   paragraph('{/existingTrees}'),
+  paragraph('{canopyTreesResponse}'),
   heading('Clause 52.37 — New canopy tree area'),
   paragraph('Required canopy: {canopyRequired}% of the {canopy}-m²-provided area ({canopyAchieved}% achieved).'),
   heading('Clause 55 — B2-1 Street setback'),
