@@ -34,9 +34,11 @@ export async function initializeDatabase() {
     user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
     report JSONB NOT NULL DEFAULT '{}'::jsonb,
+    current_step INTEGER NOT NULL DEFAULT 0,
     created_at BIGINT NOT NULL,
     updated_at BIGINT NOT NULL
   )`)
+  await pool.query('ALTER TABLE projects ADD COLUMN IF NOT EXISTS current_step INTEGER NOT NULL DEFAULT 0')
   await pool.query('CREATE INDEX IF NOT EXISTS projects_user_updated_idx ON projects (user_id, updated_at DESC)')
   await pool.query(`CREATE TABLE IF NOT EXISTS app_migrations (
     name TEXT PRIMARY KEY,

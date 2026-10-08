@@ -25,7 +25,7 @@ For deployments that call the Render API directly, set `VITE_API_URL` to the API
 
 An account is required to create and manage projects. Projects are stored in the backend database; report content and wizard progress are not saved to browser storage. Use **Save & exit** or **Complete report** to create a new database project or update the project currently open. Unsaved changes are lost if you leave or refresh.
 
-The home screen lists the signed-in user's projects from the API. **Create project** starts a blank report with a new project identity, while opening a project card edits that existing database record. Each card has a delete button with an inline confirmation before the project is permanently removed.
+The home screen lists the signed-in user's projects from the API. **Create project** starts a blank report with a new project identity, while opening a project card edits that existing database record and resumes at its last saved wizard step. **Save & exit** stores the report and current step together. Each card has a delete button with an inline confirmation before the project is permanently removed.
 
 | Step | Data captured |
 | --- | --- |

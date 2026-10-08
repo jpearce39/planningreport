@@ -109,6 +109,7 @@ Each of steps 21 (B2-1), 22 (B2-2), and 23 (B2-3) records whether the proposal i
 | `{streetSetbackCompliant}` / `{streetSetbackAppealRights}` | Compliance and appeal-rights for B2-1 |
 | `{buildingHeightCompliant}` / `{buildingHeightAppealRights}` | Compliance and appeal-rights for B2-2 |
 | `{streetSetbackDistance}` / `{streetSetbackNotes}` | B2-1 distance (m) and notes (defaults are filled in if the user leaves them empty) |
+| `{#hasSecondaryStreetFrontage}...{/hasSecondaryStreetFrontage}` | Optional secondary-frontage setback block; include `{secondaryStreetSetbackDistance}` inside it |
 | `{buildingHeightValue}` / `{buildingHeightNotes}` | B2-2 maximum height (m) and notes (defaults filled) |
 | `{sideRearSetbacksMethod}` | `B2-3.1` or `B2-3.2` |
 | `{sideRearSetbacksCompliant}` / `{sideRearSetbacksAppealRights}` | Compliance and appeal-rights for B2-3 |

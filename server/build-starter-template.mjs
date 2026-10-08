@@ -59,6 +59,7 @@ const body = [
   heading('Clause 55 — B2-1 Street setback'),
   paragraph('Compliant: {streetSetbackCompliant} (appeal rights: {streetSetbackAppealRights}).'),
   paragraph('Distance setback from primary frontage: {streetSetbackDistance} m.'),
+  paragraph('{#hasSecondaryStreetFrontage}Distance setback from secondary frontage: {secondaryStreetSetbackDistance} m.{/hasSecondaryStreetFrontage}'),
   paragraph('{streetSetbackNotes}'),
   heading('Clause 55 — B2-2 Building height'),
   paragraph('Compliant: {buildingHeightCompliant} (appeal rights: {buildingHeightAppealRights}).'),

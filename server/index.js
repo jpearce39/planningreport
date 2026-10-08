@@ -266,19 +266,19 @@ app.get('/api/auth/me', async (request, response) => {
 })
 
 app.get('/api/projects', requireUser, async (request, response) => {
-  const result = await pool.query('SELECT id, user_id AS "userId", name, report, created_at::double precision AS "createdAt", updated_at::double precision AS "updatedAt" FROM projects WHERE user_id = $1 ORDER BY updated_at DESC', [request.user.id])
+  const result = await pool.query('SELECT id, user_id AS "userId", name, report, current_step AS step, created_at::double precision AS "createdAt", updated_at::double precision AS "updatedAt" FROM projects WHERE user_id = $1 ORDER BY updated_at DESC', [request.user.id])
   response.json({ projects: result.rows })
 })
 app.post('/api/projects', requireUser, async (request, response) => {
-  const project = { id: id(), userId: request.user.id, name: request.body.name || request.body.address || 'Untitled planning report', report: request.body.report || {}, createdAt: Date.now(), updatedAt: Date.now() }
-  await pool.query('INSERT INTO projects (id, user_id, name, report, created_at, updated_at) VALUES ($1, $2, $3, $4::jsonb, $5, $6)', [project.id, project.userId, project.name, JSON.stringify(project.report), project.createdAt, project.updatedAt])
+  const project = { id: id(), userId: request.user.id, name: request.body.name || request.body.address || 'Untitled planning report', report: request.body.report || {}, step: Number.isInteger(request.body.step) && request.body.step >= 0 ? request.body.step : 0, createdAt: Date.now(), updatedAt: Date.now() }
+  await pool.query('INSERT INTO projects (id, user_id, name, report, current_step, created_at, updated_at) VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7)', [project.id, project.userId, project.name, JSON.stringify(project.report), project.step, project.createdAt, project.updatedAt])
   response.status(201).json({ project })
 })
 app.put('/api/projects/:projectId', requireUser, async (request, response) => {
   const updatedAt = Date.now()
   const result = await pool.query(
-    'UPDATE projects SET report = COALESCE($1::jsonb, report), name = COALESCE($2, name), updated_at = $3 WHERE id = $4 AND user_id = $5 RETURNING id, user_id AS "userId", name, report, created_at::double precision AS "createdAt", updated_at::double precision AS "updatedAt"',
-    [request.body.report ? JSON.stringify(request.body.report) : null, request.body.name || null, updatedAt, request.params.projectId, request.user.id],
+    'UPDATE projects SET report = COALESCE($1::jsonb, report), name = COALESCE($2, name), current_step = COALESCE($3, current_step), updated_at = $4 WHERE id = $5 AND user_id = $6 RETURNING id, user_id AS "userId", name, report, current_step AS step, created_at::double precision AS "createdAt", updated_at::double precision AS "updatedAt"',
+    [request.body.report ? JSON.stringify(request.body.report) : null, request.body.name || null, Number.isInteger(request.body.step) && request.body.step >= 0 ? request.body.step : null, updatedAt, request.params.projectId, request.user.id],
   )
   if (!result.rowCount) return response.status(404).json({ error: 'Project not found' })
   response.json({ project: result.rows[0] })
@@ -388,6 +388,8 @@ function documentData(report) {
     canopyAreaPercent,
     canopyAreaPercentage: canopyAreaPercent,
     streetSetbackDistance: ss.distance || '',
+    hasSecondaryStreetFrontage: Boolean(ss.hasSecondaryFrontage && ss.secondaryDistance),
+    secondaryStreetSetbackDistance: ss.secondaryDistance || '',
     streetSetbackNotes,
     streetSetbackCompliant: complianceLabel(ss.compliant),
     streetSetbackAppealRights: appealRightsLabel(ss, true),
