@@ -1,3 +1,5 @@
+import { buildDevelopmentSummary } from '../shared/development-summary.js'
+
 function escapeHtml(value) {
   return String(value ?? '')
     .replace(/&/g, '&amp;')
@@ -14,7 +16,7 @@ export function buildPrintableReportHtml(report, title, standard, gardenRequirem
   const safeZoneDescription = escapeHtml(report.zoneDescription || 'Not provided')
   const safeOverlays = escapeHtml(report.overlays || 'None identified')
   const safeLga = escapeHtml(report.lga || 'Not provided')
-  const safeSummary = escapeHtml(report.summary || 'No summary has been entered yet.')
+  const safeSummary = escapeHtml(report.summary || buildDevelopmentSummary(report))
   const siteArea = escapeHtml(report.siteArea || '—')
   const frontage = escapeHtml(report.frontage || '—')
   const siteCoverage = escapeHtml(report.siteCoverage || '—')

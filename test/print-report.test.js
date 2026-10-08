@@ -22,3 +22,18 @@ test('print formatter produces a dedicated report document', () => {
   assert.match(html, /Site metrics/i)
   assert.match(html, /A1 — Minimum street setback: 9m/i)
 })
+
+test('print formatter uses the generated development summary when no custom summary exists', () => {
+  const html = buildPrintableReportHtml({
+    dwellings: '2',
+    storeys: '2',
+    summaryVehicleAccess: 'New crossover',
+    parkingArrangements: [
+      { arrangement: 'Onsite parking', other: '' },
+      { arrangement: 'Onsite parking', other: '' },
+    ],
+  }, 'Planning report', '', 0, 0, '')
+
+  assert.match(html, /2 double-storey dwellings/)
+  assert.match(html, /a proposed new crossover/)
+})

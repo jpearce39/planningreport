@@ -7,6 +7,7 @@ import PizZip from 'pizzip'
 
 const paragraph = (text) => `<w:p><w:r><w:t xml:space="preserve">${text}</w:t></w:r></w:p>`
 const heading = (text) => `<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t xml:space="preserve">${text}</w:t></w:r></w:p>`
+const table = (rows) => `<w:tbl><w:tblPr><w:tblStyle w:val="TableGrid"/><w:tblW w:w="0" w:type="auto"/><w:tblBorders><w:top w:val="single" w:sz="4" w:color="808080"/><w:left w:val="single" w:sz="4" w:color="808080"/><w:bottom w:val="single" w:sz="4" w:color="808080"/><w:right w:val="single" w:sz="4" w:color="808080"/><w:insideH w:val="single" w:sz="4" w:color="808080"/><w:insideV w:val="single" w:sz="4" w:color="808080"/></w:tblBorders></w:tblPr><w:tblGrid><w:gridCol w:w="2400"/><w:gridCol w:w="1800"/><w:gridCol w:w="2400"/><w:gridCol w:w="2400"/></w:tblGrid>${rows.map((row) => `<w:tr>${row.map((text) => `<w:tc><w:tcPr><w:tcW w:w="2200" w:type="dxa"/></w:tcPr>${paragraph(text)}</w:tc>`).join('')}</w:tr>`).join('')}</w:tbl>`
 
 const body = [
   heading('{title}'),
@@ -18,6 +19,7 @@ const body = [
   paragraph('Overlays: {overlays}'),
   paragraph('Local government: {lga}'),
   heading('Development'),
+  paragraph('DEVELOPMENT OF {dwellingCountText} {storeyDescription}-STOREY DWELLING{dwellingPlural} WITH ONSITE PARKING AND ASSOCIATED LANDSCAPING'),
   paragraph('Proposed dwellings: {dwellings}'),
   paragraph('Storeys: {storeys}'),
   paragraph('Parking summary: {parking}'),
@@ -69,10 +71,10 @@ const body = [
   heading('Clause 55 — B2-3 Side & rear setbacks'),
   paragraph('Compliant: {sideRearSetbacksCompliant} (appeal rights: {sideRearSetbacksAppealRights}).'),
   paragraph('Method: {sideRearSetbacksMethod}.'),
-  paragraph('{#sideRearBoundaries}'),
-  paragraph('{name} ({southLabel}):'),
-  paragraph('{floorsText}'),
-  paragraph('{/sideRearBoundaries}'),
+  table([
+    ['Boundary', 'Floor', 'Height', 'Required setback', 'Achieved setback'],
+    ['{#sideRearSetbackRows}{boundaryName} ({southLabel})', '{floorName}', '{height} m', '{requiredSetback} m', '{achievedSetback} m{/sideRearSetbackRows}'],
+  ]),
   paragraph('{sideRearSetbacksNotes}'),
   heading('Clause 55 — B2-4 Walls on boundaries'),
   paragraph('Compliant: {wallsOnBoundaryCompliant} (appeal rights: {wallsOnBoundaryAppealRights}).'),

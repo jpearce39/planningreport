@@ -10,6 +10,9 @@ import Docxtemplater from 'docxtemplater'
 import ImageModule from 'docxtemplater-image-module-free'
 import { appealRightsLabel, complianceLabel } from './document-compliance.js'
 import { buildParkingData } from './parking-data.js'
+import { buildDevelopmentDescription } from './development-description.js'
+import { buildSideRearSetbackData } from './side-rear-setback-data.js'
+import { buildDevelopmentSummary } from '../shared/development-summary.js'
 
 const app = express()
 const port = Number(process.env.PORT || 3001)
@@ -339,8 +342,6 @@ async function renderMapImage(browser, base, overlay) {
     await page.close()
   }
 }
-function requiredSetbackB231(height) { const h = Number(height) || 0; if (h <= 3.6) return 1; if (h <= 6.9) return +(1 + 0.3 * (h - 3.6)).toFixed(2); return +(h - 4.91).toFixed(2) }
-function requiredSetbackB232(height, isSouthFacing) { const h = Number(height) || 0; if (!isSouthFacing) return h > 11 ? 4.5 : 3; return h > 11 ? 9 : 6 }
 function allowableWallOnBoundary(boundaryLength) { const bl = Number(boundaryLength) || 0; if (!bl) return ''; return +(10 + 0.25 * bl).toFixed(2) }
 function maxCoveragePercent(zone) { const z = String(zone || '').trim().toUpperCase(); if (z.startsWith('NRZ')) return 60; if (z.startsWith('GRZ')) return 65; if (z.startsWith('RGZ') || z.startsWith('MUZ') || z.startsWith('HCTZ')) return 70; return 60 }
 function maxCrossoverWidth(frontage) { const f = Number(frontage) || 0; if (!f) return ''; return +(f < 20 ? f * 0.4 : f * 0.33).toFixed(2) }
@@ -368,18 +369,13 @@ function documentData(report) {
   const ac = report.accessClause || { compliant: false, proposedWidth: '', treeEncroachmentPct: '', notes: '' }
   const streetSetbackNotes = (ss.notes || '').trim() || 'Front setback compliant with planning controls.'
   const buildingHeightNotes = (bh.notes || '').trim() || 'Maximum height is below the requirement of the zoning.'
-  const sideRearBoundaries = (srs.boundaries || []).map((boundary) => {
-    const isSouthFacing = Boolean(boundary.isSouthFacing)
-    const calc = (height) => srs.method === 'B2-3.1' ? requiredSetbackB231(height) : requiredSetbackB232(height, isSouthFacing)
-    const floorsText = (boundary.floors || []).map((floor, index) => `Floor ${index + 1}: ${floor.height || '—'} m height → required ${floor.height ? `${calc(floor.height)} m` : '—'}, achieved ${floor.achieved || '—'} m.`).join('\n') || '(no floors)'
-    const southLabel = srs.method === 'B2-3.2' ? `${isSouthFacing ? 'south-facing (between S 30° W and S 30° E)' : 'not south-facing'}` : ''
-    return { name: boundary.name || '(unnamed boundary)', southLabel, floorsText }
-  })
+  const { sideRearBoundaries, sideRearSetbackRows } = buildSideRearSetbackData(srs.boundaries, srs.method)
   const data = {
     title: report.address || 'Untitled planning report',
     date: new Date().toLocaleDateString('en-AU', { day: 'numeric', month: 'long', year: 'numeric' }),
     coverImage: report.coverImage || '',
     ...buildParkingData(report),
+    ...buildDevelopmentDescription(report),
     gardenClause, gardenRequirement, gardenRequirementArea, gardenAchieved, canopyRequired, canopyRequiredArea, canopyAchieved,
     siteCoveragePercent,
     siteCoveragePercentage: siteCoveragePercent,
@@ -402,6 +398,7 @@ function documentData(report) {
     sideRearSetbacksCompliant: complianceLabel(srs.compliant),
     sideRearSetbacksAppealRights: appealRightsLabel(srs, true),
     sideRearBoundaries,
+    sideRearSetbackRows,
     wallsOnBoundaryCompliant: complianceLabel(wb.compliant),
     wallsOnBoundaryAppealRights: appealRightsLabel(wb, true),
     wallsOnBoundaryCount: wb.count || String((wb.walls || []).length),
@@ -528,6 +525,7 @@ function documentData(report) {
       : 'As per Arborist Report\n\nAll new canopy trees species and calculations as per provided landscape plan.')
   }
   for (const key of ['address', 'zone', 'zoneDescription', 'overlays', 'lga', 'dwellings', 'storeys', 'existing', 'siteArea', 'frontage', 'frontageStreet', 'siteCoverage', 'permeable', 'gardenArea', 'canopy', 'maxHeight', 'summary', 'ordinance', 'carParking']) data[key] = report[key] || ''
+  data.summary = report.summary || buildDevelopmentSummary(report)
   return data
 }
 
