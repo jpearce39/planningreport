@@ -118,14 +118,9 @@ function parkingArrangementsFor(report: Pick<Report, 'dwellings' | 'parking' | '
 
 function App() {
   const [view, setView] = useState<'home' | 'wizard' | 'report'>('home')
-  const [step, setStep] = useState(() => {
-    const savedStep = Number(localStorage.getItem('planning-report-step') || 0)
-    const migratedStep = savedStep >= 17 ? savedStep - 1 : savedStep
-    return Math.min(Math.max(migratedStep, 0), steps.length - 1)
-  })
+  const [step, setStep] = useState(0)
   const [report, setReport] = useState<Report>(() => {
-    const stored = JSON.parse(localStorage.getItem('planning-report') || 'null')
-    const merged = withAppealRights({ ...blankReport, ...(stored || {}), images: { ...blankReport.images, ...(stored?.images || {}) } })
+    const merged = withAppealRights({ ...blankReport, images: { ...blankReport.images } })
     if (!Array.isArray(merged.existingTrees)) merged.existingTrees = []
     if (typeof merged.carParking !== 'string') merged.carParking = blankReport.carParking
     if (!merged.maxHeight) merged.maxHeight = 'None specified.'
@@ -135,22 +130,76 @@ function App() {
   const [user, setUser] = useState<{ id: string; name: string; email: string } | null>(null)
   const [authOpen, setAuthOpen] = useState(false)
   const [authMode, setAuthMode] = useState<'login' | 'register'>('login')
+  const [createAfterAuth, setCreateAfterAuth] = useState(false)
   const [projectId, setProjectId] = useState<string | null>(null)
   const [lookupState, setLookupState] = useState('Ready to look up')
   const [saved, setSaved] = useState(false)
   const [saveError, setSaveError] = useState('')
+  const [projectsError, setProjectsError] = useState('')
   const [exporting, setExporting] = useState(false)
   const [projects, setProjects] = useState<Project[]>([])
 
-  const update = (key: keyof Report, value: any) => setReport((current) => ({ ...current, [key]: value }))
-  useEffect(() => { api('/api/auth/me').then((result) => setUser(result.user)).catch(() => undefined) }, [])
-  useEffect(() => { if (user) api('/api/projects').then((result) => setProjects(result.projects)).catch(() => undefined) }, [user, view])
-  const save = async () => { localStorage.setItem('planning-report', JSON.stringify(report)); localStorage.setItem('planning-report-step', String(step)); setSaveError(''); if (user) { try { const result = projectId ? await api(`/api/projects/${projectId}`, { method: 'PUT', body: JSON.stringify({ name: report.address, report }) }) : await api('/api/projects', { method: 'POST', body: JSON.stringify({ name: report.address, report }) }); setProjectId(result.project.id) } catch (error) { setSaved(false); setSaveError(`Saved locally; account sync failed: ${error instanceof Error ? error.message : 'Request failed'}`); return } } setSaved(true); setTimeout(() => setSaved(false), 1800) }
-  const goToStep = (nextStep: number) => { const safeStep = Math.min(Math.max(nextStep, 0), steps.length - 1); setStep(safeStep); localStorage.setItem('planning-report-step', String(safeStep)) }
-  const start = () => { setView('wizard'); setReport((current) => current.address ? current : withAppealRights({ ...blankReport, maxHeight: 'None specified.' })); goToStep(report.address ? step : 0) }
-  const openProject = (project: Project) => { setReport(withAppealRights({ ...blankReport, ...project.report, maxHeight: project.report.maxHeight || 'None specified.' })); setProjectId(project.id); setView('wizard'); goToStep(0) }
-  const deleteProject = async (id: string) => { try { await api(`/api/projects/${id}`, { method: 'DELETE' }) } catch { /* Remove from the list even if the server copy is already gone. */ } setProjects((current) => current.filter((project) => project.id !== id)); if (projectId === id) setProjectId(null) }
-  const deleteDraft = () => { localStorage.removeItem('planning-report'); localStorage.removeItem('planning-report-step'); setReport(withAppealRights({ ...blankReport, maxHeight: 'None specified.' })); setProjectId(null); goToStep(0) }
+  const update = (key: keyof Report, value: any) => { setSaved(false); setSaveError(''); setReport((current) => ({ ...current, [key]: value })) }
+  useEffect(() => {
+    localStorage.removeItem('planning-report')
+    localStorage.removeItem('planning-report-step')
+    api('/api/auth/me').then((result) => setUser(result.user)).catch(() => undefined)
+  }, [])
+  useEffect(() => {
+    if (!user) return
+    let active = true
+    api('/api/projects').then((result) => { if (active) setProjects(result.projects) }).catch((error) => {
+      if (active) setProjectsError(`Unable to load projects: ${error instanceof Error ? error.message : 'Request failed'}`)
+    })
+    return () => { active = false }
+  }, [user])
+  const save = async () => {
+    setSaveError('')
+    if (!user) { setSaveError('Sign in is required to save projects.'); return false }
+    try {
+      const result = projectId
+        ? await api(`/api/projects/${projectId}`, { method: 'PUT', body: JSON.stringify({ name: report.address, report }) })
+        : await api('/api/projects', { method: 'POST', body: JSON.stringify({ name: report.address, report }) })
+      setProjectId(result.project.id)
+      setProjects((current) => [result.project, ...current.filter((project) => project.id !== result.project.id)])
+      setSaved(true)
+      setTimeout(() => setSaved(false), 1800)
+      return true
+    } catch (error) {
+      setSaved(false)
+      setSaveError(`Project could not be saved: ${error instanceof Error ? error.message : 'Request failed'}`)
+      return false
+    }
+  }
+  const goToStep = (nextStep: number) => { setStep(Math.min(Math.max(nextStep, 0), steps.length - 1)) }
+  const beginProject = () => {
+    setReport(withAppealRights({ ...blankReport, images: { ...blankReport.images }, maxHeight: 'None specified.' }))
+    setProjectId(null)
+    setSaved(false)
+    setSaveError('')
+    goToStep(0)
+    setView('wizard')
+  }
+  const start = () => {
+    if (!user) {
+      setAuthMode('login')
+      setCreateAfterAuth(true)
+      setAuthOpen(true)
+      return
+    }
+    beginProject()
+  }
+  const openProject = (project: Project) => { setReport(withAppealRights({ ...blankReport, ...project.report, maxHeight: project.report.maxHeight || 'None specified.' })); setProjectId(project.id); setSaved(false); setSaveError(''); setView('wizard'); goToStep(0) }
+  const deleteProject = async (id: string) => {
+    setProjectsError('')
+    try {
+      await api(`/api/projects/${id}`, { method: 'DELETE' })
+      setProjects((current) => current.filter((project) => project.id !== id))
+      if (projectId === id) setProjectId(null)
+    } catch (error) {
+      setProjectsError(`Project could not be deleted: ${error instanceof Error ? error.message : 'Request failed'}`)
+    }
+  }
   const dwellings = Math.max(1, Number(report.dwellings) || 1)
   const calculatedGardenRequirement = report.siteArea && Number(report.siteArea) > 650 ? 35 : report.siteArea && Number(report.siteArea) > 500 ? 30 : report.siteArea && Number(report.siteArea) >= 400 ? 25 : 0
   const gardenRequirement = report.gardenRequirement !== undefined && report.gardenRequirement !== '' ? Number(report.gardenRequirement) : calculatedGardenRequirement
@@ -160,7 +209,17 @@ function App() {
 
   const title = useMemo(() => report.address || 'Untitled planning report', [report.address])
 
-  const authenticate = async (mode: 'login' | 'register', fields: { name: string; email: string; password: string }) => { const result = await api(`/api/auth/${mode}`, { method: 'POST', body: JSON.stringify(fields) }); setUser(result.user); setAuthOpen(false) }
+  const authenticate = async (mode: 'login' | 'register', fields: { name: string; email: string; password: string }) => {
+    const result = await api(`/api/auth/${mode}`, { method: 'POST', body: JSON.stringify(fields) })
+    setUser(result.user)
+    setProjectsError('')
+    setProjects([])
+    setAuthOpen(false)
+    if (createAfterAuth) {
+      setCreateAfterAuth(false)
+      beginProject()
+    }
+  }
   const printReport = () => {
     const html = buildPrintableReportHtml(report, title, standard, gardenRequirement, gardenAchieved, gardenClause)
     const printWindow = window.open('', '_blank', 'noopener,noreferrer,width=1200,height=900')
@@ -202,17 +261,17 @@ function App() {
   }
   if (view === 'report') return <ReportView report={report} title={title} standard={standard} gardenRequirement={gardenRequirement} gardenAchieved={gardenAchieved} gardenClause={gardenClause} exporting={exporting} onExportWord={exportWord} onPrintReport={printReport} onBack={() => setView('wizard')} />
   return <div className="app-shell">
-    <header className="topbar"><button className="brand" onClick={() => setView('home')}><span className="brand-mark">◒</span><span>PLAN / VIC</span></button><div className="top-actions"><span className={`saved-note ${saveError ? 'save-error' : ''}`}>{saveError || (saved ? 'Draft saved' : 'Victoria planning workspace')}</span>{user ? <button className="avatar" title={`Sign out (${user.email})`} onClick={() => api('/api/auth/logout', { method: 'POST' }).then(() => { setUser(null); setProjects([]) })}>{user.name.slice(0, 2).toUpperCase()}</button> : <><button className="auth-link" onClick={() => { setAuthMode('login'); setAuthOpen(true) }}>Sign in</button><button className="auth-cta" onClick={() => { setAuthMode('register'); setAuthOpen(true) }}>Sign up</button></>}</div></header>
-    {view === 'home' ? <Home onStart={start} onLogin={() => setAuthOpen(true)} user={user} report={report} projects={projects} onOpenProject={openProject} onDeleteProject={deleteProject} onDeleteDraft={deleteDraft} /> : <Wizard step={step} setStep={goToStep} report={report} update={update} save={save} saved={saved} lookupState={lookupState} setLookupState={setLookupState} onComplete={() => { save(); setView('report') }} onCancel={() => setView('home')} standard={standard} dwellings={dwellings} gardenRequirement={gardenRequirement} gardenAchieved={gardenAchieved} gardenClause={gardenClause} user={user} onLogin={() => setAuthOpen(true)} />}
-    {authOpen && <AuthPanel mode={authMode} setMode={setAuthMode} onClose={() => setAuthOpen(false)} onSubmit={authenticate} />}
+    <header className="topbar"><button className="brand" onClick={() => setView('home')}><span className="brand-mark">◒</span><span>PLAN / VIC</span></button><div className="top-actions"><span className={`saved-note ${saveError ? 'save-error' : ''}`}>{saveError || (saved ? 'Saved to account' : 'Victoria planning workspace')}</span>{user ? <button className="avatar" title={`Sign out (${user.email})`} onClick={() => api('/api/auth/logout', { method: 'POST' }).then(() => { setUser(null); setProjects([]); setProjectId(null); setSaved(false); setSaveError(''); setReport(withAppealRights({ ...blankReport, images: { ...blankReport.images }, maxHeight: 'None specified.' })); setView('home') }).catch((error) => setSaveError(`Sign out failed: ${error instanceof Error ? error.message : 'Request failed'}`))}>{user.name.slice(0, 2).toUpperCase()}</button> : <><button className="auth-link" onClick={() => { setAuthMode('login'); setAuthOpen(true) }}>Sign in</button><button className="auth-cta" onClick={() => { setAuthMode('register'); setAuthOpen(true) }}>Sign up</button></>}</div></header>
+    {view === 'home' ? <Home onStart={start} onLogin={() => { setAuthMode('login'); setCreateAfterAuth(false); setAuthOpen(true) }} user={user} projects={projects} projectsError={projectsError} onOpenProject={openProject} onDeleteProject={deleteProject} /> : <Wizard step={step} setStep={goToStep} report={report} update={update} save={save} saved={saved} lookupState={lookupState} setLookupState={setLookupState} onComplete={async () => { if (await save()) setView('report') }} onCancel={() => setView('home')} standard={standard} dwellings={dwellings} gardenRequirement={gardenRequirement} gardenAchieved={gardenAchieved} gardenClause={gardenClause} />}
+    {authOpen && <AuthPanel mode={authMode} setMode={setAuthMode} onClose={() => { setAuthOpen(false); setCreateAfterAuth(false) }} onSubmit={authenticate} />}
   </div>
 }
 
-function Home({ onStart, onLogin, user, report, projects, onOpenProject, onDeleteProject, onDeleteDraft }: { onStart: () => void; onLogin: () => void; user: { id: string; name: string; email: string } | null; report: Report; projects: Project[]; onOpenProject: (project: Project) => void; onDeleteProject: (id: string) => void; onDeleteDraft: () => void }) {
+function Home({ onStart, onLogin, user, projects, projectsError, onOpenProject, onDeleteProject }: { onStart: () => void; onLogin: () => void; user: { id: string; name: string; email: string } | null; projects: Project[]; projectsError: string; onOpenProject: (project: Project) => void; onDeleteProject: (id: string) => void }) {
   const cards = user
     ? projects.map((project) => ({ key: project.id, name: project.name || 'Untitled planning report', detail: `Saved project · Updated ${new Date(project.updatedAt).toLocaleDateString('en-AU')}`, onOpen: () => onOpenProject(project), onDelete: () => onDeleteProject(project.id) }))
-    : report.address ? [{ key: 'draft', name: report.address, detail: 'Draft report · Updated just now', onOpen: onStart, onDelete: onDeleteDraft }] : []
-  return <main className="home"><section className="hero"><div className="eyebrow">VICTORIA / RESIDENTIAL DEVELOPMENT</div><h1>Planning reports,<br /><em>made legible.</em></h1><p>Build a clear, evidence-led town planning report from site facts to final schedule in one guided workspace.</p><div className="hero-actions"><button className="primary" onClick={onStart}>Create project <span>↗</span></button><button className="text-button" onClick={onLogin}>{user ? `Signed in as ${user.name}` : 'Sign in to save projects'} <span>→</span></button></div></section><section className="project-area"><div className="section-heading"><div><span className="eyebrow">YOUR WORKSPACE</span><h2>Recent projects</h2></div><span className="project-count">{String(cards.length).padStart(2, '0')} / {String(cards.length).padStart(2, '0')}</span></div>{cards.length ? cards.map((card) => <ProjectCard key={card.key} name={card.name} detail={card.detail} onOpen={card.onOpen} onDelete={card.onDelete} />) : <article className="project-card" onClick={onStart}><div className="project-icon">⌂</div><div className="project-info"><h3>Start your first project</h3><p>A guided 19-step workflow for your next application</p></div><span className="project-arrow">→</span></article>}<div className="workspace-foot"><span>Vicmap connected</span><span className="dot"></span><span>Drafts autosave locally</span><a href="#documentation">Read documentation ↗</a></div></section></main>
+    : []
+  return <main className="home"><section className="hero"><div className="eyebrow">VICTORIA / RESIDENTIAL DEVELOPMENT</div><h1>Planning reports,<br /><em>made legible.</em></h1><p>Build a clear, evidence-led town planning report from site facts to final schedule in one guided workspace.</p><div className="hero-actions"><button className="primary" onClick={onStart}>Create project <span>↗</span></button>{user ? <span className="account-status">Signed in as {user.name}</span> : <button className="text-button" onClick={onLogin}>Sign in to manage projects <span>→</span></button>}</div></section><section className="project-area"><div className="section-heading"><div><span className="eyebrow">YOUR WORKSPACE</span><h2>Recent projects</h2></div><span className="project-count">{String(cards.length).padStart(2, '0')} / {String(cards.length).padStart(2, '0')}</span></div>{projectsError && <p className="auth-error">{projectsError}</p>}{cards.length ? cards.map((card) => <ProjectCard key={card.key} name={card.name} detail={card.detail} onOpen={card.onOpen} onDelete={card.onDelete} />) : <article className="project-card" onClick={onStart}><div className="project-icon">⌂</div><div className="project-info"><h3>{user ? 'Start your first project' : 'Sign in to view your projects'}</h3><p>{user ? 'A guided 19-step workflow for your next application' : 'Projects are saved to your account, not on this device.'}</p></div><span className="project-arrow">→</span></article>}<div className="workspace-foot"><span>Vicmap connected</span><span className="dot"></span><span>Projects saved to your account</span><a href="#documentation">Read documentation ↗</a></div></section></main>
 }
 
 function ProjectCard({ name, detail, onOpen, onDelete }: { name: string; detail: string; onOpen: () => void; onDelete: () => void }) {
@@ -239,7 +298,7 @@ function Wizard({ step, setStep, report, update, save, saved, lookupState, setLo
   }, [step, setStep, onComplete])
   const lookup = async () => { setLookupState('Querying Vicmap…'); try { const result = await api(`/api/vicmap/lookup?address=${encodeURIComponent(report.address)}`); const parcel = result.parcel; if (parcel.zone) update('zone', parcel.zone); if (parcel.zoneDescription) update('zoneDescription', parcel.zoneDescription); if (parcel.overlays) update('overlays', parcel.overlays); if (parcel.lga) update('lga', parcel.lga); if (parcel.siteArea) update('siteArea', String(Math.round(Number(parcel.siteArea)))); if (result.maps) update('images', { satellite: result.maps.satellite || '', satelliteBoundary: result.maps.satelliteBoundary || '', zoning: result.maps.zoning || '', overlays: result.maps.overlays || [] }); if (!report.frontageStreet) update('frontageStreet', formatStreetName(report.address)); setLookupState(parcel.zone ? 'Vicmap match found' : result.planningControlsAvailable ? 'Overlays found — zone unavailable, enter manually' : 'Parcel found — enter zone manually') } catch { setReportDefaults(report, update); setLookupState('Vicmap unavailable — edit manually') } }
   const scrapeStandards = async () => { setStandardsState('Scraping planning scheme…'); try { const result = await api(`/api/planning/standards?lga=${encodeURIComponent(report.lga)}&zone=${encodeURIComponent(report.zone)}&dwellings=${dwellings}`); if (result.text) update('ordinance', result.text); if (result.maxHeight) update('maxHeight', result.maxHeight); setStandardsState(result.message) } catch (error) { if (!report.maxHeight) update('maxHeight', 'None specified.'); setStandardsState(error instanceof Error ? error.message : 'Scrape failed — enter manually') } }
-  return <main className="wizard"><aside className="stepper"><div className="eyebrow">NEW PROJECT</div><h2>Report builder</h2><div className="step-list">{steps.map((name, index) => <button key={name} className={index === step ? 'active' : index < step ? 'complete' : ''} onClick={() => index <= step && setStep(index)}><span>{index < step ? '✓' : String(index + 1).padStart(2, '0')}</span>{name}</button>)}</div><div className="step-footer"><span className="dot green"></span>All changes saved locally</div></aside><section className="form-pane"><div className="form-top"><button className="back-link" onClick={onCancel}>← Projects</button><span>Step {String(step + 1).padStart(2, '0')} of {steps.length}</span></div><div className="form-content"><div className="eyebrow">{String(step + 1).padStart(2, '0')} / {steps.length}</div><h1>{steps[step]}</h1><p className="step-intro">{step === 0 ? 'Start with the site address. We will use it to find the parcel and planning controls.' : 'Capture the site detail that will anchor this report.'}</p><StepContent step={step} report={report} update={update} lookup={lookup} lookupState={lookupState} standard={standard} dwellings={dwellings} gardenRequirement={gardenRequirement} gardenAchieved={gardenAchieved} gardenClause={gardenClause} standardsState={standardsState} scrapeStandards={scrapeStandards} /><div className="form-nav"><button className="secondary" onClick={async () => { await save(); onCancel() }}>Save & exit</button><span>{saved ? 'Saved' : 'You can return to this draft anytime'}</span><button className="primary" onClick={() => isLast ? onComplete() : setStep(step + 1)}>{isLast ? 'Complete report' : 'Continue'} <span>→</span></button></div></div></section></main>
+  return <main className="wizard"><aside className="stepper"><div className="eyebrow">NEW PROJECT</div><h2>Report builder</h2><div className="step-list">{steps.map((name, index) => <button key={name} className={index === step ? 'active' : index < step ? 'complete' : ''} onClick={() => index <= step && setStep(index)}><span>{index < step ? '✓' : String(index + 1).padStart(2, '0')}</span>{name}</button>)}</div><div className="step-footer"><span className="dot green"></span>Save this project to your account</div></aside><section className="form-pane"><div className="form-top"><button className="back-link" onClick={onCancel}>← Projects</button><span>Step {String(step + 1).padStart(2, '0')} of {steps.length}</span></div><div className="form-content"><div className="eyebrow">{String(step + 1).padStart(2, '0')} / {steps.length}</div><h1>{steps[step]}</h1><p className="step-intro">{step === 0 ? 'Start with the site address. We will use it to find the parcel and planning controls.' : 'Capture the site detail that will anchor this report.'}</p><StepContent step={step} report={report} update={update} lookup={lookup} lookupState={lookupState} standard={standard} dwellings={dwellings} gardenRequirement={gardenRequirement} gardenAchieved={gardenAchieved} gardenClause={gardenClause} standardsState={standardsState} scrapeStandards={scrapeStandards} /><div className="form-nav"><button className="secondary" onClick={async () => { if (await save()) onCancel() }}>Save & exit</button><span>{saved ? 'Saved to account' : 'Save this project to return to it later'}</span><button className="primary" onClick={() => isLast ? onComplete() : setStep(step + 1)}>{isLast ? 'Complete report' : 'Continue'} <span>→</span></button></div></div></section></main>
 }
 
 function setReportDefaults(report: Report, update: (key: keyof Report, value: string) => void) { if (!report.zone) update('zone', sample.zone); if (!report.zoneDescription) update('zoneDescription', sample.zoneDescription); if (!report.overlays) update('overlays', sample.overlays); if (!report.lga) update('lga', sample.lga); if (!report.siteArea) update('siteArea', '612'); if (!report.frontageStreet) update('frontageStreet', formatStreetName(report.address)) }

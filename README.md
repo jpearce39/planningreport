@@ -21,15 +21,15 @@ Deploy the frontend as a Cloudflare Pages project using the Vite settings:
 - Build output directory: `dist`
 - Root directory: `/`
 
-The API remains on Render; Pages serves the static frontend and proxies `/api/*` to the API through `public/_redirects`. Leave `VITE_API_URL` unset in Pages so the browser uses this same-origin proxy; this lets session cookies work without relying on third-party cookies. Create a Render PostgreSQL database in the same region as the API service, then set the service's `DATABASE_URL` to the database's internal connection URL. Also set `NODE_ENV=production` and `CORS_ORIGIN` to the exact Pages site origin, for example `https://your-project.pages.dev`. Add any custom frontend domain as another comma-separated origin. Render supplies `PORT` automatically; the API listens on that port (Render commonly assigns `10000`).
+The API remains on Render; the Pages Function in `functions/api/[[path]].js` proxies `/api/*` requests to it. Leave `VITE_API_URL` unset in Pages so the browser uses this same-origin proxy; this lets session cookies work without relying on third-party cookies. Create a Render PostgreSQL database in the same region as the API service, then set the service's `DATABASE_URL` to the database's internal connection URL. Also set `NODE_ENV=production` and `CORS_ORIGIN` to the exact Pages site origin, for example `https://your-project.pages.dev`. Add any custom frontend domain as another comma-separated origin. Render supplies `PORT` automatically; the API listens on that port (Render commonly assigns `10000`).
 
 For deployments that do not use the Pages proxy, set `VITE_API_URL` to the API origin and configure `CORS_ORIGIN` to the frontend origin. Authentication uses cross-origin cookies in this mode, and some browsers restrict third-party cookies between unrelated domains; a same-site frontend/API hostname pair (for example, `app.example.com` and `api.example.com`) is more reliable.
 
 ## Workflow data reference
 
-The report builder stores one report object in browser `localStorage` under `planning-report`, with the current wizard step under `planning-report-step`. Every wizard screen writes to that object, so **Save & exit** and browser refreshes preserve the current draft. When signed in, saving also syncs the draft to the backend projects API; the local copy remains the fallback when signed out or when the API is offline.
+An account is required to create and manage projects. Projects are stored in the backend database; report content and wizard progress are not saved to browser storage. Use **Save & exit** or **Complete report** to create a new database project or update the project currently open. Unsaved changes are lost if you leave or refresh.
 
-The home screen lists your saved projects from the API when signed in, or the local draft when signed out. Clicking a project card reopens it in the wizard, and each card has a delete button with an inline confirmation before the project (or local draft) is permanently removed.
+The home screen lists the signed-in user's projects from the API. **Create project** starts a blank report with a new project identity, while opening a project card edits that existing database record. Each card has a delete button with an inline confirmation before the project is permanently removed.
 
 | Step | Data captured |
 | --- | --- |
