@@ -13,17 +13,13 @@ Create a local PostgreSQL database first. `dev:full` starts the Express API on p
 
 Create a production build with `npm run build`.
 
-## Deploy to Cloudflare Pages
+## Deploy to Cloudflare Workers
 
-Deploy the frontend as a Cloudflare Pages project using the Vite settings:
+The Worker serves the Vite build from `dist` and proxies `/api/*` to the Render API, including login/session cookies. In the Cloudflare Workers build settings, use `npm run build` as the build command and `npm run deploy` as the deploy command. The `wrangler.jsonc` file configures the Worker entry point and static assets. Leave `VITE_API_URL` unset so the browser uses the same-origin API proxy.
 
-- Build command: `npm run build`
-- Build output directory: `dist`
-- Root directory: `/`
+Create a Render PostgreSQL database in the same region as the API service, then set the service's `DATABASE_URL` to the database's internal connection URL. Also set `NODE_ENV=production` and `CORS_ORIGIN` to the exact Worker origin, for example `https://planningreport.<account>.workers.dev`. Add any custom Worker domain as another comma-separated origin. Render supplies `PORT` automatically; the API listens on that port (Render commonly assigns `10000`).
 
-The API remains on Render; the Pages Function in `functions/api/[[path]].js` proxies `/api/*` requests to it. Leave `VITE_API_URL` unset in Pages so the browser uses this same-origin proxy; this lets session cookies work without relying on third-party cookies. Create a Render PostgreSQL database in the same region as the API service, then set the service's `DATABASE_URL` to the database's internal connection URL. Also set `NODE_ENV=production` and `CORS_ORIGIN` to the exact Pages site origin, for example `https://your-project.pages.dev`. Add any custom frontend domain as another comma-separated origin. Render supplies `PORT` automatically; the API listens on that port (Render commonly assigns `10000`).
-
-For deployments that do not use the Pages proxy, set `VITE_API_URL` to the API origin and configure `CORS_ORIGIN` to the frontend origin. Authentication uses cross-origin cookies in this mode, and some browsers restrict third-party cookies between unrelated domains; a same-site frontend/API hostname pair (for example, `app.example.com` and `api.example.com`) is more reliable.
+For deployments that call the Render API directly, set `VITE_API_URL` to the API origin and configure `CORS_ORIGIN` to the frontend origin. Authentication then uses cross-origin cookies, which some browsers restrict between unrelated domains.
 
 ## Workflow data reference
 
