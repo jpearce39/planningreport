@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useState, type FormEvent } from 'react'
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { buildPrintableReportHtml } from './report-print.js'
 import { buildDevelopmentSummary } from '../shared/development-summary.js'
 import './App.css'
@@ -134,6 +134,8 @@ function App() {
   const [authMode, setAuthMode] = useState<'login' | 'register'>('login')
   const [createAfterAuth, setCreateAfterAuth] = useState(false)
   const [projectId, setProjectId] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+  const saveInFlight = useRef<Promise<boolean> | null>(null)
   const [lookupState, setLookupState] = useState('Ready to look up')
   const [saved, setSaved] = useState(false)
   const [saveError, setSaveError] = useState('')
@@ -155,23 +157,32 @@ function App() {
     })
     return () => { active = false }
   }, [user])
-  const save = async () => {
+  const save = () => {
+    if (saveInFlight.current) return saveInFlight.current
     setSaveError('')
-    if (!user) { setSaveError('Sign in is required to save projects.'); return false }
-    try {
-      const result = projectId
-        ? await api(`/api/projects/${projectId}`, { method: 'PUT', body: JSON.stringify({ name: report.address, report, step }) })
-        : await api('/api/projects', { method: 'POST', body: JSON.stringify({ name: report.address, report, step }) })
-      setProjectId(result.project.id)
-      setProjects((current) => [result.project, ...current.filter((project) => project.id !== result.project.id)])
-      setSaved(true)
-      setTimeout(() => setSaved(false), 1800)
-      return true
-    } catch (error) {
-      setSaved(false)
-      setSaveError(`Project could not be saved: ${error instanceof Error ? error.message : 'Request failed'}`)
-      return false
-    }
+    if (!user) { setSaveError('Sign in is required to save projects.'); return Promise.resolve(false) }
+    setSaving(true)
+    const pending = (async () => {
+      try {
+        const result = projectId
+          ? await api(`/api/projects/${projectId}`, { method: 'PUT', body: JSON.stringify({ name: report.address, report, step }) })
+          : await api('/api/projects', { method: 'POST', body: JSON.stringify({ name: report.address, report, step }) })
+        setProjectId(result.project.id)
+        setProjects((current) => [result.project, ...current.filter((project) => project.id !== result.project.id)])
+        setSaved(true)
+        setTimeout(() => setSaved(false), 1800)
+        return true
+      } catch (error) {
+        setSaved(false)
+        setSaveError(`Project could not be saved: ${error instanceof Error ? error.message : 'Request failed'}`)
+        return false
+      } finally {
+        saveInFlight.current = null
+        setSaving(false)
+      }
+    })()
+    saveInFlight.current = pending
+    return pending
   }
   const goToStep = (nextStep: number) => { setStep(Math.min(Math.max(nextStep, 0), steps.length - 1)) }
   const beginProject = () => {
@@ -264,7 +275,7 @@ function App() {
   if (view === 'report') return <ReportView report={report} title={title} standard={standard} gardenRequirement={gardenRequirement} gardenAchieved={gardenAchieved} gardenClause={gardenClause} exporting={exporting} onExportWord={exportWord} onPrintReport={printReport} onBack={() => setView('wizard')} />
   return <div className="app-shell">
     <header className="topbar"><button className="brand" onClick={() => setView('home')}><span className="brand-mark">◒</span><span>PLAN / VIC</span></button><div className="top-actions"><span className={`saved-note ${saveError ? 'save-error' : ''}`}>{saveError || (saved ? 'Saved to account' : 'Victoria planning workspace')}</span>{user ? <button className="avatar" title={`Sign out (${user.email})`} onClick={() => api('/api/auth/logout', { method: 'POST' }).then(() => { setUser(null); setProjects([]); setProjectId(null); setSaved(false); setSaveError(''); setReport(withAppealRights({ ...blankReport, images: { ...blankReport.images }, maxHeight: 'None specified.' })); setView('home') }).catch((error) => setSaveError(`Sign out failed: ${error instanceof Error ? error.message : 'Request failed'}`))}>{user.name.slice(0, 2).toUpperCase()}</button> : <><button className="auth-link" onClick={() => { setAuthMode('login'); setAuthOpen(true) }}>Sign in</button><button className="auth-cta" onClick={() => { setAuthMode('register'); setAuthOpen(true) }}>Sign up</button></>}</div></header>
-    {view === 'home' ? <Home onStart={start} onLogin={() => { setAuthMode('login'); setCreateAfterAuth(false); setAuthOpen(true) }} user={user} projects={projects} projectsError={projectsError} onOpenProject={openProject} onDeleteProject={deleteProject} /> : <Wizard step={step} setStep={goToStep} report={report} update={update} save={save} saved={saved} lookupState={lookupState} setLookupState={setLookupState} onComplete={async () => { if (await save()) setView('report') }} onCancel={() => setView('home')} standard={standard} dwellings={dwellings} gardenRequirement={gardenRequirement} gardenAchieved={gardenAchieved} gardenClause={gardenClause} />}
+    {view === 'home' ? <Home onStart={start} onLogin={() => { setAuthMode('login'); setCreateAfterAuth(false); setAuthOpen(true) }} user={user} projects={projects} projectsError={projectsError} onOpenProject={openProject} onDeleteProject={deleteProject} /> : <Wizard step={step} setStep={goToStep} report={report} update={update} save={save} saving={saving} saved={saved} lookupState={lookupState} setLookupState={setLookupState} onComplete={async () => { if (await save()) setView('report') }} onCancel={() => setView('home')} standard={standard} dwellings={dwellings} gardenRequirement={gardenRequirement} gardenAchieved={gardenAchieved} gardenClause={gardenClause} />}
     {authOpen && <AuthPanel mode={authMode} setMode={setAuthMode} onClose={() => { setAuthOpen(false); setCreateAfterAuth(false) }} onSubmit={authenticate} />}
   </div>
 }
@@ -282,7 +293,7 @@ function ProjectCard({ name, detail, onOpen, onDelete }: { name: string; detail:
   return <article className="project-card" onClick={onOpen}><div className="project-icon">⌂</div><div className="project-info"><h3>{name}</h3><p>{detail}</p></div><button className="project-delete" aria-label={`Delete ${name}`} title={`Delete ${name}`} onClick={(event) => { event.stopPropagation(); setConfirming(true) }}>×</button><span className="project-arrow">→</span></article>
 }
 
-function Wizard({ step, setStep, report, update, save, saved, lookupState, setLookupState, onComplete, onCancel, standard, dwellings, gardenRequirement, gardenAchieved, gardenClause }: any) {
+function Wizard({ step, setStep, report, update, save, saving, saved, lookupState, setLookupState, onComplete, onCancel, standard, dwellings, gardenRequirement, gardenAchieved, gardenClause }: any) {
   const isLast = step === steps.length - 1
   const [standardsState, setStandardsState] = useState('Ready to scrape')
   useEffect(() => {
@@ -300,7 +311,7 @@ function Wizard({ step, setStep, report, update, save, saved, lookupState, setLo
   }, [step, setStep, onComplete])
   const lookup = async () => { setLookupState('Querying Vicmap…'); try { const result = await api(`/api/vicmap/lookup?address=${encodeURIComponent(report.address)}`); const parcel = result.parcel; if (parcel.zone) update('zone', parcel.zone); if (parcel.zoneDescription) update('zoneDescription', parcel.zoneDescription); if (parcel.overlays) update('overlays', parcel.overlays); if (parcel.lga) update('lga', parcel.lga); if (parcel.siteArea) update('siteArea', String(Math.round(Number(parcel.siteArea)))); if (result.maps) update('images', { satellite: result.maps.satellite || '', satelliteBoundary: result.maps.satelliteBoundary || '', zoning: result.maps.zoning || '', overlays: result.maps.overlays || [] }); if (!report.frontageStreet) update('frontageStreet', formatStreetName(report.address)); setLookupState(parcel.zone ? 'Vicmap match found' : result.planningControlsAvailable ? 'Overlays found — zone unavailable, enter manually' : 'Parcel found — enter zone manually') } catch { setReportDefaults(report, update); setLookupState('Vicmap unavailable — edit manually') } }
   const scrapeStandards = async () => { setStandardsState('Scraping planning scheme…'); try { const result = await api(`/api/planning/standards?lga=${encodeURIComponent(report.lga)}&zone=${encodeURIComponent(report.zone)}&dwellings=${dwellings}`); if (result.text) update('ordinance', result.text); if (result.maxHeight) update('maxHeight', result.maxHeight); setStandardsState(result.message) } catch (error) { if (!report.maxHeight) update('maxHeight', 'None specified.'); setStandardsState(error instanceof Error ? error.message : 'Scrape failed — enter manually') } }
-  return <main className="wizard"><aside className="stepper"><div className="eyebrow">NEW PROJECT</div><h2>Report builder</h2><div className="step-list">{steps.map((name, index) => <button key={name} className={index === step ? 'active' : index < step ? 'complete' : ''} onClick={() => index <= step && setStep(index)}><span>{index < step ? '✓' : String(index + 1).padStart(2, '0')}</span>{name}</button>)}</div><div className="step-footer"><span className="dot green"></span>Save this project to your account</div></aside><section className="form-pane"><div className="form-top"><button className="back-link" onClick={onCancel}>← Projects</button><span>Step {String(step + 1).padStart(2, '0')} of {steps.length}</span></div><div className="form-content"><div className="eyebrow">{String(step + 1).padStart(2, '0')} / {steps.length}</div><h1>{steps[step]}</h1><p className="step-intro">{step === 0 ? 'Start with the site address. We will use it to find the parcel and planning controls.' : 'Capture the site detail that will anchor this report.'}</p><StepContent step={step} report={report} update={update} lookup={lookup} lookupState={lookupState} standard={standard} dwellings={dwellings} gardenRequirement={gardenRequirement} gardenAchieved={gardenAchieved} gardenClause={gardenClause} standardsState={standardsState} scrapeStandards={scrapeStandards} /><div className="form-nav"><button className="secondary" onClick={async () => { if (await save()) onCancel() }}>Save & exit</button><span>{saved ? 'Saved to account' : 'Save this project to return to it later'}</span><button className="primary" onClick={() => isLast ? onComplete() : setStep(step + 1)}>{isLast ? 'Complete report' : 'Continue'} <span>→</span></button></div></div></section></main>
+  return <main className="wizard"><aside className="stepper"><div className="eyebrow">NEW PROJECT</div><h2>Report builder</h2><div className="step-list">{steps.map((name, index) => <button key={name} className={index === step ? 'active' : index < step ? 'complete' : ''} onClick={() => index <= step && setStep(index)}><span>{index < step ? '✓' : String(index + 1).padStart(2, '0')}</span>{name}</button>)}</div><div className="step-footer"><span className="dot green"></span>Save this project to your account</div></aside><section className="form-pane"><div className="form-top"><button className="back-link" onClick={onCancel}>← Projects</button><span>Step {String(step + 1).padStart(2, '0')} of {steps.length}</span></div><div className="form-content"><div className="eyebrow">{String(step + 1).padStart(2, '0')} / {steps.length}</div><h1>{steps[step]}</h1><p className="step-intro">{step === 0 ? 'Start with the site address. We will use it to find the parcel and planning controls.' : 'Capture the site detail that will anchor this report.'}</p><StepContent step={step} report={report} update={update} lookup={lookup} lookupState={lookupState} standard={standard} dwellings={dwellings} gardenRequirement={gardenRequirement} gardenAchieved={gardenAchieved} gardenClause={gardenClause} standardsState={standardsState} scrapeStandards={scrapeStandards} /><div className="form-nav"><button className="secondary" disabled={saving} onClick={async () => { if (await save()) onCancel() }}>{saving ? 'Saving…' : 'Save & exit'}</button><span>{saved ? 'Saved to account' : 'Save this project to return to it later'}</span><button className="primary" disabled={saving} onClick={() => isLast ? onComplete() : setStep(step + 1)}>{saving ? 'Saving…' : isLast ? 'Complete report' : 'Continue'} <span>→</span></button></div></div></section></main>
 }
 
 function setReportDefaults(report: Report, update: (key: keyof Report, value: string) => void) { if (!report.zone) update('zone', sample.zone); if (!report.zoneDescription) update('zoneDescription', sample.zoneDescription); if (!report.overlays) update('overlays', sample.overlays); if (!report.lga) update('lga', sample.lga); if (!report.siteArea) update('siteArea', '612'); if (!report.frontageStreet) update('frontageStreet', formatStreetName(report.address)) }
@@ -389,7 +400,7 @@ function WallFields({ value, onChange }: { value: { elevation: string; boundaryL
   const updateWall = (index: number, patch: Partial<{ elevation: string; boundaryLength: string; achieved: string; averageHeight: string; maxHeight: string }>) => onChange(value.map((wall, wallIndex) => wallIndex === index ? { ...wall, ...patch } : wall))
   const removeWall = (index: number) => onChange(value.filter((_, wallIndex) => wallIndex !== index))
   const addWall = () => onChange([...value, { elevation: '', boundaryLength: '', achieved: '', averageHeight: '', maxHeight: '' }])
-  return <div className="overlay-fields"><div className="overlay-heading"><span className="group-label">Walls on boundary</span><span className="overlay-count">{value.length} added</span></div>{value.map((wall, index) => <div className="wall-card" key={index}><div className="tree-card-head"><span className="data-label">WALL {index + 1}</span>{value.length > 1 && <button type="button" className="remove-overlay" aria-label={`Remove wall ${index + 1}`} onClick={() => removeWall(index)}>×</button>}</div><div className="wall-fields"><Field label="Elevation" value={wall.elevation} onChange={(nextValue: string) => updateWall(index, { elevation: nextValue })} placeholder="e.g. NORTH ELEVATION" /><div className="wall-row"><Field label="Boundary length" value={wall.boundaryLength} onChange={(nextValue: string) => updateWall(index, { boundaryLength: nextValue })} type="number" placeholder="e.g. 69.90" hint="Metres" /><div className="metric"><span>Allowable wall on boundary</span><strong>{wall.boundaryLength ? `${allowableWallOnBoundary(wall.boundaryLength)} m` : '—'}</strong></div><Field label="Achieved wall on boundary" value={wall.achieved} onChange={(nextValue: string) => updateWall(index, { achieved: nextValue })} type="number" placeholder="e.g. 8.40" hint="Metres" /></div><div className="wall-row"><Field label="Average height" value={wall.averageHeight} onChange={(nextValue: string) => updateWall(index, { averageHeight: nextValue })} type="number" placeholder="e.g. 7.20" hint="Metres" /><Field label="Maximum height" value={wall.maxHeight} onChange={(nextValue: string) => updateWall(index, { maxHeight: nextValue })} type="number" placeholder="e.g. 8.40" hint="Metres" /><div /></div></div></div>)}<button type="button" className="add-overlay" onClick={addWall}>＋ Add wall</button></div>
+  return <div className="overlay-fields"><div className="overlay-heading"><span className="group-label">Walls on boundary</span><span className="overlay-count">{value.length} added</span></div>{value.map((wall, index) => <div className="wall-card" key={index}><div className="tree-card-head"><span className="data-label">WALL {index + 1}</span><button type="button" className="remove-overlay" aria-label={`Remove wall ${index + 1}`} onClick={() => removeWall(index)}>×</button></div><div className="wall-fields"><Field label="Elevation" value={wall.elevation} onChange={(nextValue: string) => updateWall(index, { elevation: nextValue })} placeholder="e.g. NORTH ELEVATION" /><div className="wall-row"><Field label="Boundary length" value={wall.boundaryLength} onChange={(nextValue: string) => updateWall(index, { boundaryLength: nextValue })} type="number" placeholder="e.g. 69.90" hint="Metres" /><div className="metric"><span>Allowable wall on boundary</span><strong>{wall.boundaryLength ? `${allowableWallOnBoundary(wall.boundaryLength)} m` : '—'}</strong></div><Field label="Achieved wall on boundary" value={wall.achieved} onChange={(nextValue: string) => updateWall(index, { achieved: nextValue })} type="number" placeholder="e.g. 8.40" hint="Metres" /></div><div className="wall-row"><Field label="Average height" value={wall.averageHeight} onChange={(nextValue: string) => updateWall(index, { averageHeight: nextValue })} type="number" placeholder="e.g. 7.20" hint="Metres" /><Field label="Maximum height" value={wall.maxHeight} onChange={(nextValue: string) => updateWall(index, { maxHeight: nextValue })} type="number" placeholder="e.g. 8.40" hint="Metres" /><div /></div></div></div>)}<button type="button" className="add-overlay" onClick={addWall}>＋ Add wall</button></div>
 }
 function StepContent(props: any) {
   const { step, report, update } = props
