@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This brief summarizes the current PLAN / VIC application stack and deployment for an in-house IT review. It also lists hosting and identity questions to resolve before planning a migration.
+This brief summarizes the current Planning Report Generator application stack and deployment for an in-house IT review. It also lists hosting and identity questions to resolve before planning a migration.
 
 ## Application and technology stack
 
@@ -31,14 +31,14 @@ The current deployment details below reflect the deployment information supplied
 
 ## Questions for IT
 
-1. **Frontend/domain:** Can the built frontend be hosted on our existing webhosting and served under our current domain? If so, should it use a subdomain (for example, `planning.<our-domain>`) or a path on an existing site? Can IT provide DNS, TLS certificates, and any required reverse-proxy or static-site configuration?
+1. **Frontend/domain:** Can the built frontend be hosted on our existing webhosting and served under our current domain? If so, should it use a subdomain (for example, `tools.planning.wardledesign.com.au`) or a path on an existing site? Can IT provide DNS, TLS certificates, and any required reverse-proxy or static-site configuration?
 2. **Cloudflare Access:** Can Cloudflare Access remain in front of the in-house-hosted frontend, with one-time PIN login restricted to `@wardledesign.com.au`? If not, what approved identity provider or access-control approach should replace it?
 3. **API hosting:** Can the current webhosting run a persistent Node.js/Express API, or is a separate application-hosting service required? Does the hosting support the Node.js runtime and packages needed by the app?
 4. **PostgreSQL:** Can the API use a PostgreSQL service on the current hosting platform, or does IT provide a managed PostgreSQL service? What are the connection, network allow-listing, backup, restore, and retention arrangements?
 5. **Document generation:** Does the proposed API host support Puppeteer with Chromium, including the required executable and system libraries, memory, and temporary storage? These are used for document and planning-data processing.
 6. **Networking:** Can the API make outbound HTTPS requests to the Esri/ArcGIS endpoints and the Victorian planning schemes website? Are there proxy, firewall, allow-listing, or data-egress requirements?
 7. **Security and operations:** What are the requirements for secrets management, TLS, logging and monitoring, patching, incident response, database backups, and recovery testing?
-8. **Migration:** Can IT support transferring existing PostgreSQL data from Render, validating it, and scheduling a cutover with a rollback plan?
+8. **Migration:** Can IT support transferring existing PostgreSQL data from Render and validating it?
 
 ## Hosting considerations
 
