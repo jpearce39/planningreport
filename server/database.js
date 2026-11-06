@@ -21,8 +21,12 @@ export async function initializeDatabase() {
     email TEXT NOT NULL UNIQUE,
     password_hash TEXT NOT NULL,
     salt TEXT NOT NULL,
-    created_at BIGINT NOT NULL
+    created_at BIGINT NOT NULL,
+    role TEXT NOT NULL DEFAULT 'user',
+    must_change_password BOOLEAN NOT NULL DEFAULT FALSE
   )`)
+  await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'user'")
+  await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN NOT NULL DEFAULT FALSE')
   await pool.query(`CREATE TABLE IF NOT EXISTS sessions (
     token TEXT PRIMARY KEY,
     user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -44,18 +48,18 @@ export async function initializeDatabase() {
     name TEXT PRIMARY KEY,
     applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   )`)
+  await pool.query(`CREATE TABLE IF NOT EXISTS app_settings (
+    key TEXT PRIMARY KEY,
+    value BYTEA NOT NULL,
+    updated_at BIGINT NOT NULL
+  )`)
 
   const client = await pool.connect()
   try {
     await client.query('BEGIN')
     await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', ['planning-report-legacy-store-import'])
     const migration = await client.query('SELECT 1 FROM app_migrations WHERE name = $1', ['legacy_json_store_import'])
-    if (migration.rowCount) {
-      await client.query('COMMIT')
-      return
-    }
-
-    if (fs.existsSync(legacyStoreFile)) {
+    if (!migration.rowCount && fs.existsSync(legacyStoreFile)) {
       const store = JSON.parse(fs.readFileSync(legacyStoreFile, 'utf8'))
       const userIds = new Map()
 
@@ -89,12 +93,22 @@ export async function initializeDatabase() {
       }
     }
 
-    await client.query('INSERT INTO app_migrations (name) VALUES ($1)', ['legacy_json_store_import'])
+    if (!migration.rowCount) {
+      await client.query('INSERT INTO app_migrations (name) VALUES ($1)', ['legacy_json_store_import'])
+    }
     await client.query('COMMIT')
   } catch (error) {
     await client.query('ROLLBACK')
     throw error
   } finally {
     client.release()
+  }
+
+  const templateFile = path.resolve('server', 'template.docx')
+  if (fs.existsSync(templateFile)) {
+    await pool.query(
+      'INSERT INTO app_settings (key, value, updated_at) VALUES ($1, $2, $3) ON CONFLICT (key) DO NOTHING',
+      ['document_template', fs.readFileSync(templateFile), Date.now()],
+    )
   }
 }

@@ -1,6 +1,4 @@
 import crypto from 'node:crypto'
-import fs from 'node:fs'
-import path from 'node:path'
 import express from 'express'
 import { initializeDatabase, pool } from './database.js'
 import puppeteer from 'puppeteer'
@@ -18,7 +16,6 @@ const app = express()
 const port = Number(process.env.PORT || 3001)
 const allowedOrigins = new Set((process.env.CORS_ORIGIN || process.env.FRONTEND_URL || 'http://localhost:5173').split(',').map((origin) => origin.trim()).filter(Boolean))
 const sessionCookieAttributes = `HttpOnly; Path=/; SameSite=${process.env.NODE_ENV === 'production' ? 'None; Secure' : 'Lax'}`
-const templateFile = path.resolve('server', 'template.docx')
 const vicmapUrl = 'https://services-ap1.arcgis.com/P744lA0wf4LlBZ84/arcgis/rest/services/Vicmap_Parcel/FeatureServer/0/query'
 const planningUrl = 'https://services-ap1.arcgis.com/P744lA0wf4LlBZ84/arcgis/rest/services/Vicmap_Planning/FeatureServer'
 const geocoderUrl = 'https://geocode.arcgis.com/arcgis/rest/services/World/GeocodeServer/findAddressCandidates'
@@ -53,7 +50,7 @@ async function userFromRequest(request) {
   const token = cookieValue(request, 'plan_vic_session')
   if (!token) return null
   const result = await pool.query(
-    'SELECT users.id, users.name, users.email FROM users JOIN sessions ON sessions.user_id = users.id WHERE sessions.token = $1 AND sessions.expires_at > $2',
+    'SELECT users.id, users.name, users.email, users.role, users.must_change_password AS "mustChangePassword" FROM users JOIN sessions ON sessions.user_id = users.id WHERE sessions.token = $1 AND sessions.expires_at > $2',
     [token, Date.now()],
   )
   return result.rows[0] || null
@@ -64,7 +61,16 @@ async function requireUser(request, response, next) {
   request.user = user
   next()
 }
-function publicUser(user) { return { id: user.id, name: user.name, email: user.email } }
+async function requirePasswordChanged(request, response, next) {
+  if (request.user.mustChangePassword) return response.status(403).json({ error: 'Change your temporary password before continuing' })
+  next()
+}
+async function requireAdmin(request, response, next) {
+  if (!request.user) return response.status(401).json({ error: 'Authentication required' })
+  if (request.user.role !== 'admin' || request.user.mustChangePassword) return response.status(403).json({ error: 'Administrator access required' })
+  next()
+}
+function publicUser(user) { return { id: user.id, name: user.name, email: user.email, role: user.role || 'user', mustChangePassword: Boolean(user.mustChangePassword) } }
 function zoneClause(zone) {
   const normalized = String(zone || '').trim().toUpperCase()
   const match = normalized.match(/^(GRZ|NRZ|RGZ)(\d+)$/)
@@ -230,9 +236,9 @@ app.post('/api/auth/register', async (request, response) => {
   if (!name || !email || !password || password.length < 8) return response.status(400).json({ error: 'Name, email and a password of at least 8 characters are required' })
   const normalizedEmail = email.trim().toLowerCase()
   const credentials = hashPassword(password)
-  const user = { id: id(), name: name.trim(), email: normalizedEmail, passwordHash: credentials.hash, salt: credentials.salt, createdAt: Date.now() }
+  const user = { id: id(), name: name.trim(), email: normalizedEmail, passwordHash: credentials.hash, salt: credentials.salt, createdAt: Date.now(), role: 'user', mustChangePassword: false }
   try {
-    await pool.query('INSERT INTO users (id, name, email, password_hash, salt, created_at) VALUES ($1, $2, $3, $4, $5, $6)', [user.id, user.name, user.email, user.passwordHash, user.salt, user.createdAt])
+    await pool.query('INSERT INTO users (id, name, email, password_hash, salt, created_at, role) VALUES ($1, $2, $3, $4, $5, $6, $7)', [user.id, user.name, user.email, user.passwordHash, user.salt, user.createdAt, user.role])
   } catch (error) {
     if (error.code === '23505') return response.status(409).json({ error: 'An account with that email already exists' })
     throw error
@@ -242,7 +248,7 @@ app.post('/api/auth/register', async (request, response) => {
 
 app.post('/api/auth/login', async (request, response) => {
   const { email, password } = request.body || {}
-  const result = await pool.query('SELECT id, name, email, password_hash AS "passwordHash", salt FROM users WHERE email = $1', [String(email || '').trim().toLowerCase()])
+  const result = await pool.query('SELECT id, name, email, password_hash AS "passwordHash", salt, role, must_change_password AS "mustChangePassword" FROM users WHERE email = $1', [String(email || '').trim().toLowerCase()])
   const user = result.rows[0]
   if (!user || !validPassword(String(password || ''), user)) return response.status(401).json({ error: 'Email or password is incorrect' })
   return createSession(response, user)
@@ -267,17 +273,29 @@ app.get('/api/auth/me', async (request, response) => {
   const user = await userFromRequest(request)
   response.json({ user: user ? publicUser(user) : null })
 })
+app.post('/api/auth/change-password', requireUser, async (request, response) => {
+  const { currentPassword, newPassword } = request.body || {}
+  if (typeof newPassword !== 'string' || newPassword.length < 8) return response.status(400).json({ error: 'A new password of at least 8 characters is required' })
+  const result = await pool.query('SELECT password_hash AS "passwordHash", salt FROM users WHERE id = $1', [request.user.id])
+  const credentials = result.rows[0]
+  if (!credentials || !validPassword(String(currentPassword || ''), credentials)) return response.status(401).json({ error: 'Current password is incorrect' })
+  const nextCredentials = hashPassword(newPassword)
+  await pool.query('UPDATE users SET password_hash = $1, salt = $2, must_change_password = FALSE WHERE id = $3', [nextCredentials.hash, nextCredentials.salt, request.user.id])
+  const token = cookieValue(request, 'plan_vic_session')
+  await pool.query('DELETE FROM sessions WHERE user_id = $1 AND token <> $2', [request.user.id, token])
+  response.json({ user: publicUser({ ...request.user, mustChangePassword: false }) })
+})
 
-app.get('/api/projects', requireUser, async (request, response) => {
+app.get('/api/projects', requireUser, requirePasswordChanged, async (request, response) => {
   const result = await pool.query('SELECT id, user_id AS "userId", name, report, current_step AS step, created_at::double precision AS "createdAt", updated_at::double precision AS "updatedAt" FROM projects WHERE user_id = $1 ORDER BY updated_at DESC', [request.user.id])
   response.json({ projects: result.rows })
 })
-app.post('/api/projects', requireUser, async (request, response) => {
+app.post('/api/projects', requireUser, requirePasswordChanged, async (request, response) => {
   const project = { id: id(), userId: request.user.id, name: request.body.name || request.body.address || 'Untitled planning report', report: request.body.report || {}, step: Number.isInteger(request.body.step) && request.body.step >= 0 ? request.body.step : 0, createdAt: Date.now(), updatedAt: Date.now() }
   await pool.query('INSERT INTO projects (id, user_id, name, report, current_step, created_at, updated_at) VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7)', [project.id, project.userId, project.name, JSON.stringify(project.report), project.step, project.createdAt, project.updatedAt])
   response.status(201).json({ project })
 })
-app.put('/api/projects/:projectId', requireUser, async (request, response) => {
+app.put('/api/projects/:projectId', requireUser, requirePasswordChanged, async (request, response) => {
   const updatedAt = Date.now()
   const result = await pool.query(
     'UPDATE projects SET report = COALESCE($1::jsonb, report), name = COALESCE($2, name), current_step = COALESCE($3, current_step), updated_at = $4 WHERE id = $5 AND user_id = $6 RETURNING id, user_id AS "userId", name, report, current_step AS step, created_at::double precision AS "createdAt", updated_at::double precision AS "updatedAt"',
@@ -286,11 +304,174 @@ app.put('/api/projects/:projectId', requireUser, async (request, response) => {
   if (!result.rowCount) return response.status(404).json({ error: 'Project not found' })
   response.json({ project: result.rows[0] })
 })
-app.delete('/api/projects/:projectId', requireUser, async (request, response) => {
+app.delete('/api/projects/:projectId', requireUser, requirePasswordChanged, async (request, response) => {
   const result = await pool.query('DELETE FROM projects WHERE id = $1 AND user_id = $2', [request.params.projectId, request.user.id])
   if (!result.rowCount) return response.status(404).json({ error: 'Project not found' })
   response.sendStatus(204)
 })
+
+app.get('/api/admin/users', requireUser, requireAdmin, async (request, response) => {
+  const result = await pool.query(
+    `SELECT users.id, users.name, users.email, users.role, users.created_at::double precision AS "createdAt",
+      COUNT(projects.id)::integer AS "projectCount"
+     FROM users LEFT JOIN projects ON projects.user_id = users.id
+     GROUP BY users.id ORDER BY users.created_at DESC`,
+  )
+  response.json({ users: result.rows })
+})
+app.put('/api/admin/users/:userId/role', requireUser, requireAdmin, async (request, response) => {
+  const { role } = request.body || {}
+  if (role !== 'admin' && role !== 'user') return response.status(400).json({ error: 'Role must be admin or user' })
+  if (request.params.userId === request.user.id && role !== 'admin') return response.status(400).json({ error: 'You cannot remove your own administrator role' })
+
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+    await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', ['planning-report-admin-accounts'])
+    const target = await client.query('SELECT id, role FROM users WHERE id = $1 FOR UPDATE', [request.params.userId])
+    if (!target.rowCount) {
+      await client.query('ROLLBACK')
+      return response.status(404).json({ error: 'Account not found' })
+    }
+    if (target.rows[0].role === 'admin' && role !== 'admin') {
+      const admins = await client.query("SELECT COUNT(*)::integer AS count FROM users WHERE role = 'admin'")
+      if (admins.rows[0].count <= 1) {
+        await client.query('ROLLBACK')
+        return response.status(409).json({ error: 'The last administrator cannot be demoted' })
+      }
+    }
+    const updated = await client.query('UPDATE users SET role = $1 WHERE id = $2 RETURNING id, name, email, role, created_at::double precision AS "createdAt"', [role, request.params.userId])
+    await client.query('COMMIT')
+    response.json({ user: updated.rows[0] })
+  } catch (error) {
+    await client.query('ROLLBACK')
+    throw error
+  } finally {
+    client.release()
+  }
+})
+app.delete('/api/admin/users/:userId', requireUser, requireAdmin, async (request, response) => {
+  if (request.params.userId === request.user.id) return response.status(400).json({ error: 'You cannot delete your own account' })
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+    await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', ['planning-report-admin-accounts'])
+    const target = await client.query('SELECT id, role FROM users WHERE id = $1 FOR UPDATE', [request.params.userId])
+    if (!target.rowCount) {
+      await client.query('ROLLBACK')
+      return response.status(404).json({ error: 'Account not found' })
+    }
+    if (target.rows[0].role === 'admin') {
+      const admins = await client.query("SELECT COUNT(*)::integer AS count FROM users WHERE role = 'admin'")
+      if (admins.rows[0].count <= 1) {
+        await client.query('ROLLBACK')
+        return response.status(409).json({ error: 'The last administrator cannot be deleted' })
+      }
+    }
+    await client.query('DELETE FROM users WHERE id = $1', [request.params.userId])
+    await client.query('COMMIT')
+    response.sendStatus(204)
+  } catch (error) {
+    await client.query('ROLLBACK')
+    throw error
+  } finally {
+    client.release()
+  }
+})
+app.post('/api/admin/users/:userId/reset-password', requireUser, requireAdmin, async (request, response) => {
+  if (request.params.userId === request.user.id) return response.status(400).json({ error: 'Use the account password change flow to update your own password' })
+  const temporaryPassword = crypto.randomBytes(12).toString('base64url')
+  const credentials = hashPassword(temporaryPassword)
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+    const updated = await client.query(
+      'UPDATE users SET password_hash = $1, salt = $2, must_change_password = TRUE WHERE id = $3 RETURNING id',
+      [credentials.hash, credentials.salt, request.params.userId],
+    )
+    if (!updated.rowCount) {
+      await client.query('ROLLBACK')
+      return response.status(404).json({ error: 'Account not found' })
+    }
+    await client.query('DELETE FROM sessions WHERE user_id = $1', [request.params.userId])
+    await client.query('COMMIT')
+    response.json({ temporaryPassword })
+  } catch (error) {
+    await client.query('ROLLBACK')
+    throw error
+  } finally {
+    client.release()
+  }
+})
+app.get('/api/admin/projects', requireUser, requireAdmin, async (request, response) => {
+  const result = await pool.query(
+    `SELECT projects.id, projects.user_id AS "userId", projects.name, projects.current_step AS step,
+      projects.created_at::double precision AS "createdAt", projects.updated_at::double precision AS "updatedAt",
+      users.name AS "userName", users.email AS "userEmail"
+     FROM projects JOIN users ON users.id = projects.user_id ORDER BY projects.updated_at DESC`,
+  )
+  response.json({ projects: result.rows })
+})
+app.get('/api/admin/projects/:projectId', requireUser, requireAdmin, async (request, response) => {
+  const result = await pool.query(
+    `SELECT projects.id, projects.user_id AS "userId", projects.name, projects.report,
+      projects.current_step AS step, projects.created_at::double precision AS "createdAt",
+      projects.updated_at::double precision AS "updatedAt", users.name AS "userName", users.email AS "userEmail"
+     FROM projects JOIN users ON users.id = projects.user_id WHERE projects.id = $1`,
+    [request.params.projectId],
+  )
+  if (!result.rowCount) return response.status(404).json({ error: 'Project not found' })
+  response.json({ project: result.rows[0] })
+})
+app.put('/api/admin/projects/:projectId', requireUser, requireAdmin, async (request, response) => {
+  const { name, report, step } = request.body || {}
+  if (typeof name !== 'string' || !name.trim() || name.length > 200) return response.status(400).json({ error: 'Project name is required and must be 200 characters or fewer' })
+  if (!report || typeof report !== 'object' || Array.isArray(report)) return response.status(400).json({ error: 'Project report must be a JSON object' })
+  if (!Number.isInteger(step) || step < 0) return response.status(400).json({ error: 'Project step must be a non-negative integer' })
+  const result = await pool.query(
+    'UPDATE projects SET name = $1, report = $2::jsonb, current_step = $3, updated_at = $4 WHERE id = $5 RETURNING id, user_id AS "userId", name, report, current_step AS step, created_at::double precision AS "createdAt", updated_at::double precision AS "updatedAt"',
+    [name.trim(), JSON.stringify(report), step, Date.now(), request.params.projectId],
+  )
+  if (!result.rowCount) return response.status(404).json({ error: 'Project not found' })
+  response.json({ project: result.rows[0] })
+})
+app.delete('/api/admin/projects/:projectId', requireUser, requireAdmin, async (request, response) => {
+  const result = await pool.query('DELETE FROM projects WHERE id = $1', [request.params.projectId])
+  if (!result.rowCount) return response.status(404).json({ error: 'Project not found' })
+  response.sendStatus(204)
+})
+app.get('/api/admin/template', requireUser, requireAdmin, async (request, response) => {
+  const result = await pool.query('SELECT updated_at::double precision AS "updatedAt" FROM app_settings WHERE key = $1', ['document_template'])
+  response.json({ available: Boolean(result.rowCount), updatedAt: result.rows[0]?.updatedAt ?? null })
+})
+app.get('/api/admin/template/download', requireUser, requireAdmin, async (request, response) => {
+  const result = await pool.query('SELECT value FROM app_settings WHERE key = $1', ['document_template'])
+  if (!result.rowCount) return response.status(404).json({ error: 'No Word template is configured' })
+  response.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document')
+  response.setHeader('Content-Disposition', 'attachment; filename="planning-report-template.docx"')
+  response.send(result.rows[0].value)
+})
+app.put(
+  '/api/admin/template',
+  requireUser,
+  requireAdmin,
+  express.raw({ type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', limit: '10mb' }),
+  async (request, response) => {
+    if (!Buffer.isBuffer(request.body) || !request.body.length) return response.status(400).json({ error: 'Upload a non-empty Word .docx template' })
+    try {
+      const archive = new PizZip(request.body)
+      if (!archive.file('[Content_Types].xml') || !archive.file('word/document.xml')) return response.status(400).json({ error: 'The file is not a valid Word document template' })
+    } catch {
+      return response.status(400).json({ error: 'The file is not a valid Word document template' })
+    }
+    await pool.query(
+      `INSERT INTO app_settings (key, value, updated_at) VALUES ($1, $2, $3)
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at`,
+      ['document_template', request.body, Date.now()],
+    )
+    response.json({ updatedAt: Date.now() })
+  },
+)
 
 app.get('/api/vicmap/lookup', async (request, response) => {
   const address = String(request.query.address || '').trim()
@@ -530,8 +711,9 @@ function documentData(report) {
 }
 
 app.post('/api/report/document', async (request, response) => {
-  if (!fs.existsSync(templateFile)) return response.status(400).json({ error: 'No Word template found. Add your template to server/template.docx — see docs/template-tags.md for the available tags.' })
   try {
+    const templateResult = await pool.query('SELECT value FROM app_settings WHERE key = $1', ['document_template'])
+    if (!templateResult.rowCount) return response.status(503).json({ error: 'No Word template is configured. An administrator can upload one in the admin panel.' })
     const report = request.body || {}
     const images = report.images || {}
     const data = documentData(report)
@@ -558,7 +740,7 @@ app.post('/api/report/document', async (request, response) => {
         return name.includes('cover') ? [540, 320] : [480, 320]
       },
     })
-    const zip = new PizZip(fs.readFileSync(templateFile, 'binary'))
+    const zip = new PizZip(templateResult.rows[0].value)
     const doc = new Docxtemplater(zip, { modules: [imageModule], linebreaks: true, paragraphLoop: true })
     doc.render(data)
     const outputZip = doc.getZip()

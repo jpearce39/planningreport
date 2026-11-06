@@ -38,3 +38,57 @@ button { cursor: pointer; }
 @media (max-width: 780px) {
   .compliance-body .tree-fields, .compliance-body .wall-row { grid-template-columns: minmax(0, 1fr); }
 }
+
+.admin-page { max-width: 1320px; margin: auto; padding: 48px 6vw 90px; }
+.admin-heading, .admin-section-heading { display: flex; align-items: end; justify-content: space-between; gap: 24px; }
+.admin-heading > div:first-child { max-width: 720px; }
+.admin-heading .back-link { display: block; margin-bottom: 38px; }
+.admin-heading h1, .password-change-card h1 { font: 500 clamp(3rem, 7vw, 5.6rem)/.98 "Montserrat", sans-serif; letter-spacing: -.05em; margin: 14px 0; }
+.admin-heading p, .admin-section-heading p, .template-section p, .password-change-card > p { color: #777e7b; line-height: 1.65; }
+.admin-counts { display: flex; gap: 12px; color: #777e7b; font-size: 12px; white-space: nowrap; padding-bottom: 12px; }
+.admin-counts span { padding: 10px 12px; border: 1px solid var(--line); }
+.admin-message { padding: 14px 16px; border-left: 3px solid var(--green); background: rgba(99, 125, 89, .1); font-size: 13px; }
+.admin-message.error { border-color: #a64e43; background: rgba(166, 78, 67, .1); color: #7d332c; }
+.temporary-password { display: grid; gap: 10px; padding: 20px; margin: 20px 0; border: 1px solid var(--green); background: rgba(99, 125, 89, .08); }
+.temporary-password code { width: fit-content; padding: 12px 16px; background: var(--paper); font-size: 18px; user-select: all; }
+.temporary-password p { margin: 0; color: #777e7b; font-size: 13px; }
+.temporary-password .secondary { justify-self: start; padding: 10px 14px; }
+.admin-section { margin-top: 56px; border-top: 1px solid var(--line); padding-top: 26px; }
+.admin-section-heading { align-items: start; margin-bottom: 18px; }
+.admin-section-heading h2, .template-section h2 { font: 400 30px "Montserrat", sans-serif; margin: 10px 0; }
+.admin-table-wrap { overflow-x: auto; border: 1px solid var(--line); }
+.admin-table { width: 100%; min-width: 800px; border-collapse: collapse; text-align: left; font-size: 12px; }
+.admin-table th { padding: 14px 16px; color: #777e7b; background: rgba(99, 125, 89, .08); font-size: 10px; letter-spacing: .1em; text-transform: uppercase; }
+.admin-table td { padding: 14px 16px; border-top: 1px solid var(--line); vertical-align: middle; }
+.admin-table td > strong, .admin-table td > span { display: block; }
+.admin-table td > span { margin-top: 5px; color: #777e7b; overflow-wrap: anywhere; }
+.admin-table select { max-width: 120px; padding: 8px; border: 1px solid var(--line); background: var(--paper); }
+.admin-actions { white-space: nowrap; }
+.admin-action { border: 0; background: none; color: var(--green); font-weight: 700; font-size: 11px; padding: 7px; }
+.admin-action.danger { color: #9c3f35; }
+.admin-action:disabled, .admin-table select:disabled { opacity: .5; cursor: not-allowed; }
+.admin-empty { padding: 20px; color: #777e7b; }
+.template-section { display: flex; justify-content: space-between; gap: 32px; align-items: start; }
+.template-section > div:first-child { max-width: 460px; }
+.template-actions { display: grid; justify-items: start; gap: 12px; max-width: 430px; }
+.template-actions > span { color: #777e7b; font-size: 11px; line-height: 1.5; }
+.template-upload { position: relative; overflow: hidden; display: inline-block; cursor: pointer; }
+.template-upload input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+.admin-project-editor { position: relative; width: min(760px, 94vw); max-height: 92vh; overflow-y: auto; padding: 38px; display: grid; gap: 18px; background: var(--paper); }
+.admin-project-editor h2 { margin: 0; font: 400 32px "Montserrat", sans-serif; }
+.admin-project-editor > p { margin: -12px 0 0; color: #777e7b; font-size: 13px; }
+.admin-project-editor .field textarea { resize: vertical; font: 12px/1.5 ui-monospace, monospace; }
+.editor-actions { display: flex; justify-content: end; gap: 12px; }
+.password-change-page { min-height: calc(100vh - 76px); display: grid; place-items: center; padding: 40px 20px; }
+.password-change-card { width: min(500px, 100%); display: grid; gap: 18px; }
+.password-change-card h1 { font-size: clamp(2.8rem, 7vw, 4.4rem); }
+.password-change-card > p { margin: 0 0 8px; }
+.password-change-card > .primary { justify-self: start; }
+@media (max-width: 780px) {
+  .admin-page { padding: 32px 5vw 60px; }
+  .admin-heading, .template-section { align-items: start; flex-direction: column; }
+  .admin-heading .back-link { margin-bottom: 25px; }
+  .admin-counts { padding-bottom: 0; }
+  .admin-section { margin-top: 38px; }
+  .admin-project-editor { padding: 28px 20px; }
+}
